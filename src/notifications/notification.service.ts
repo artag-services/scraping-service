@@ -1,12 +1,36 @@
 // src/notifications/notification.service.ts
 
-import { Injectable, Logger } from '@nestjs/common'
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { NotificationAdapter } from './interfaces/notification-adapter.interface'
 
 @Injectable()
-export class NotificationService {
+export class NotificationService implements OnModuleInit {
   private readonly logger = new Logger(NotificationService.name)
   private adapters: Map<string, NotificationAdapter> = new Map()
+
+  /**
+   * ✨ NEW: Inject all adapters that will be registered on module init
+   */
+  constructor(
+    private readonly availableAdapters: NotificationAdapter[] = [],
+  ) {}
+
+  /**
+   * ✨ NEW: Auto-register all injected adapters when module initializes
+   * This ensures all adapters are available before any service uses them
+   */
+  onModuleInit(): void {
+    if (this.availableAdapters.length === 0) {
+      this.logger.warn('⚠️ No notification adapters provided - service will have no adapters')
+      return
+    }
+
+    for (const adapter of this.availableAdapters) {
+      this.registerAdapter(adapter)
+    }
+
+    this.logger.log(`✅ NotificationService initialized with ${this.availableAdapters.length} adapters`)
+  }
 
   /**
    * Registra un nuevo adaptador de notificación
@@ -14,7 +38,7 @@ export class NotificationService {
   registerAdapter(adapter: NotificationAdapter): void {
     const name = adapter.getName()
     this.adapters.set(name, adapter)
-    this.logger.log(`Adapter registered: ${name}`)
+    this.logger.log(`✅ Adapter registered: ${name}`)
   }
 
   /**
@@ -43,7 +67,7 @@ export class NotificationService {
     const adapter = this.adapters.get(adapterName)
 
     if (!adapter) {
-      throw new Error(`Adapter '${adapterName}' not found`)
+      throw new Error(`Adapter '${adapterName}' not found. Available adapters: ${Array.from(this.adapters.keys()).join(', ')}`)
     }
 
     const isAvailable = await adapter.isAvailable(userId)

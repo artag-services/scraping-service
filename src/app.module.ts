@@ -34,6 +34,9 @@ import { RateLimiter } from './rate-limit/rate-limiter'
  * - QueueModule: Queue listeners (ScrapingListener handles both scraping tasks + Notion responses)
  * - Providers: Services and adapters
  *
+ * ✨ NOTIFICATION ADAPTERS: NotificationService now implements OnModuleInit and auto-registers
+ *    all adapters passed in constructor. This ensures adapters are available before any service uses them.
+ *
  * ✅ All inter-service communication via RabbitMQ (requirement met)
  * ✅ Follows standard pattern from Notion/WhatsApp/Identity services
  */
@@ -59,34 +62,27 @@ import { RateLimiter } from './rate-limit/rate-limiter'
     AutoScraper,
     PuppeteerScraper,
 
-    // ========== Notifications System ==========
-    NotificationService,
+    // ========== Notification Adapters ==========
+    // These are provided first so they can be injected into NotificationService
     WhatsAppAdapter,
     EmailAdapter,
     NotionAdapter,
+
+    // ========== Notifications System ==========
+    // ✨ IMPROVED: NotificationService now gets adapters via constructor
+    // and automatically registers them on module init
+    {
+      provide: NotificationService,
+      useFactory: (whatsappAdapter: WhatsAppAdapter, emailAdapter: EmailAdapter, notionAdapter: NotionAdapter) => {
+        return new NotificationService([whatsappAdapter, emailAdapter, notionAdapter])
+      },
+      inject: [WhatsAppAdapter, EmailAdapter, NotionAdapter],
+    },
 
     // ========== Utilities ==========
     SummaryService,
     DataCleanupService,
     RateLimiter,
-
-    // ========== Adapter Registration ==========
-    // Register all adapters in NotificationService on module initialization
-    {
-      provide: 'NOTIFICATION_ADAPTERS_INIT',
-      useFactory: (
-        notificationService: NotificationService,
-        whatsappAdapter: WhatsAppAdapter,
-        emailAdapter: EmailAdapter,
-        notionAdapter: NotionAdapter,
-      ) => {
-        notificationService.registerAdapter(whatsappAdapter)
-        notificationService.registerAdapter(emailAdapter)
-        notificationService.registerAdapter(notionAdapter)
-        return true
-      },
-      inject: [NotificationService, WhatsAppAdapter, EmailAdapter, NotionAdapter],
-    },
   ],
 })
 export class AppModule {}
