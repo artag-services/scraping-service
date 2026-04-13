@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common'
 import { ScrapingListener } from './scraping.listener'
 import { RabbitMQModule } from '../rabbitmq/rabbitmq.module'
 import { PuppeteerScraper } from '../scraper/puppeteer.scraper'
+import { AutoScraper } from '../scraper/auto-scraper'
 import { BrowserPool } from '../scraper/browser-pool'
 import { NotificationService } from '../notifications/notification.service'
 import { WhatsAppAdapter } from '../notifications/adapters/whatsapp.adapter'
@@ -22,8 +23,9 @@ import { DataCleanupService } from '../utils/data-cleanup.service'
 @Module({
   imports: [RabbitMQModule],
   providers: [
-    // Core scrapers
+    // Core scrapers (in dependency order)
     BrowserPool,
+    AutoScraper,
     PuppeteerScraper,
 
     // Notification adapters
