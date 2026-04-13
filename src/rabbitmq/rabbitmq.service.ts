@@ -156,13 +156,19 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Subscribe to a queue and consume messages
-   * ✨ IMPROVED: Better logging and standard error handling
+   * ✨ IMPROVED: Auto-connect if needed (like publish method)
    */
   async subscribe(
     queue: string,
     routingKey: string,
     handler: (payload: Record<string, any>) => Promise<void>,
   ): Promise<void> {
+    // Auto-connect if needed
+    if (!this.isConnected()) {
+      this.logger.log(`📤 RabbitMQService.subscribe() - Auto-connecting to RabbitMQ...`)
+      await this.connect()
+    }
+
     if (!this.channel) {
       throw new Error('RabbitMQ channel not connected')
     }
