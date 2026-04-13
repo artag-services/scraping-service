@@ -134,15 +134,25 @@ export class ScrapingListener implements OnModuleInit {
       // ========== STEP 3: Send to Notion via RabbitMQ ==========
       // IMPORTANT: This is inter-service communication via RabbitMQ (✅ requirement met)
       try {
+        this.logger.log(`📤 STEP 3: Sending cleaned data to Notion service via RabbitMQ...`)
+        this.logger.log(`   - cleanedData keys: ${Object.keys(cleanedData).join(', ')}`)
+        this.logger.log(`   - cleanedData.title: ${cleanedData.title}`)
+        this.logger.log(`   - sections count: ${cleanedData.sections?.length || 0}`)
+        this.logger.log(`   - links count: ${cleanedData.links?.length || 0}`)
+
         await this.notificationService.send('notion', scrapingMessage.userId, cleanedData, {
           url: scrapingMessage.url,
         })
+        this.logger.log(`✅ Notion notification successfully sent to NotificationService`)
         this.logger.log(
           `✅ Notion notification queued: user=${scrapingMessage.userId}, title="${cleanedData.title}"`,
         )
       } catch (notionError) {
         const err = notionError instanceof Error ? notionError.message : String(notionError)
-        this.logger.error(`⚠️ Failed to queue Notion notification: ${err}`)
+        this.logger.error(`❌ STEP 3 FAILED: Failed to queue Notion notification`)
+        this.logger.error(`   - error: ${err}`)
+        this.logger.error(`   - userId: ${scrapingMessage.userId}`)
+        this.logger.error(`   - title: ${cleanedData.title}`)
         // Continue anyway - Notion is optional, WhatsApp summary still sends (Opción A)
         this.logger.log(`📋 Continuing with WhatsApp summary anyway (Notion failure non-blocking)`)
       }

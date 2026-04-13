@@ -99,7 +99,7 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Publish a message to an exchange with a routing key
-   * ✨ IMPROVED: Now awaits confirmation callback from RabbitMQ
+   * ✨ IMPROVED: Detailed logging for debugging
    */
   async publish(routingKey: string, payload: Record<string, any>): Promise<void> {
     // Auto-connect if needed
@@ -112,7 +112,18 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
+      // ✨ LOG: About to serialize and publish
+      this.logger.log(`📤 RabbitMQService.publish() - START`)
+      this.logger.log(`   - exchange: ${this.exchange}`)
+      this.logger.log(`   - routingKey: ${routingKey}`)
+      this.logger.log(`   - payloadKeys: ${Object.keys(payload).join(', ')}`)
+      this.logger.log(`   - payloadSize: ${JSON.stringify(payload).length} bytes`)
+
       const buffer = Buffer.from(JSON.stringify(payload))
+
+      // ✨ LOG: Buffer prepared
+      this.logger.log(`   - bufferSize: ${buffer.length} bytes`)
+      this.logger.log(`   - attempting to publish to RabbitMQ...`)
 
       // Publish to RabbitMQ with persistent flag
       const published = this.channel!.publish(
@@ -124,14 +135,21 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
 
       if (!published) {
         const error = new Error(`RabbitMQ channel buffer full for ${routingKey}`)
-        this.logger.error(error.message)
+        this.logger.error(`❌ FAILED: ${error.message}`)
         throw error
       }
 
-      this.logger.debug(`✅ Message published to ${routingKey}`)
+      // ✨ LOG: Success
+      this.logger.log(`✅ RabbitMQService.publish() - SUCCESS`)
+      this.logger.log(`   - routingKey: ${routingKey}`)
+      this.logger.log(`   - messageId: ${payload.messageId || 'N/A'}`)
+      this.logger.log(`   - published to exchange: ${this.exchange}`)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
-      this.logger.error(`Failed to publish message: ${errorMessage}`)
+      this.logger.error(`❌ RabbitMQService.publish() - ERROR:`)
+      this.logger.error(`   - routingKey: ${routingKey}`)
+      this.logger.error(`   - errorMessage: ${errorMessage}`)
+      this.logger.error(`   - errorStack: ${error instanceof Error ? error.stack : 'N/A'}`)
       throw error
     }
   }

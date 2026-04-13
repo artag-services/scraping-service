@@ -36,6 +36,13 @@ export class NotionAdapter implements NotificationAdapter {
         throw new Error(error)  // ✨ CHANGED: Throw instead of silent return
       }
 
+      // ✨ LOG: Data received from scraping service
+      this.logger.log(`📨 NotionAdapter.send() RECEIVED data from scraping service:`)
+      this.logger.log(`   - userId: ${userId}`)
+      this.logger.log(`   - message type: ${typeof message}`)
+      this.logger.log(`   - message keys: ${message ? Object.keys(message).join(', ') : 'N/A'}`)
+      this.logger.log(`   - options: ${JSON.stringify(options)}`)
+
       // Prepare payload for Notion service
       const payload = {
         messageId,
@@ -52,14 +59,34 @@ export class NotionAdapter implements NotificationAdapter {
         },
       }
 
+      // ✨ LOG: Payload prepared before sending
+      this.logger.log(`✨ TRANSFORMED PAYLOAD ready to send to RabbitMQ:`)
+      this.logger.log(`   - messageId: ${payload.messageId}`)
+      this.logger.log(`   - operation: ${payload.operation}`)
+      this.logger.log(`   - title: ${payload.metadata.title}`)
+      this.logger.log(`   - userId: ${payload.metadata.userId}`)
+      this.logger.log(`   - url: ${payload.metadata.url}`)
+      this.logger.log(`   - parent_page_id: ${payload.metadata.parent_page_id}`)
+      this.logger.log(`   - message length: ${payload.message.length} chars`)
+
+      // ✨ LOG: About to publish to RabbitMQ
+      this.logger.log(`🚀 PUBLISHING to RabbitMQ: routingKey="channels.notion.send", messageId=${messageId}`)
+
       // Publish to Notion service queue
       await this.rabbitmq.publish('channels.notion.send', payload)
 
-      this.logger.log(`Notion notification queued: messageId=${messageId}, userId=${userId}, url=${options?.url}`)
+      // ✨ LOG: Success confirmation
+      this.logger.log(`✅ SUCCESS: Notion notification PUBLISHED to RabbitMQ`)
+      this.logger.log(`   - messageId: ${messageId}`)
+      this.logger.log(`   - userId: ${userId}`)
+      this.logger.log(`   - url: ${options?.url}`)
+      this.logger.log(`   - routingKey: channels.notion.send`)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       const stackTrace = error instanceof Error ? error.stack : ''
-      this.logger.error(`Failed to queue Notion notification: ${errorMessage}`, stackTrace)
+      this.logger.error(`❌ ERROR in NotionAdapter.send():`)
+      this.logger.error(`   - errorMessage: ${errorMessage}`)
+      this.logger.error(`   - stackTrace: ${stackTrace}`)
       throw error
     }
   }
