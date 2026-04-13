@@ -37,7 +37,7 @@ export class NotificationService {
   async send(
     adapterName: string,
     userId: string,
-    message: string,
+    message: string | any,
     options?: Record<string, any>,
   ): Promise<void> {
     const adapter = this.adapters.get(adapterName)
@@ -61,7 +61,7 @@ export class NotificationService {
   async sendMultiple(
     adapterNames: string[],
     userId: string,
-    message: string,
+    message: string | any,
     options?: Record<string, any>,
   ): Promise<boolean> {
     const errors: Record<string, string> = {}

@@ -18,7 +18,7 @@ export class EmailAdapter implements NotificationAdapter {
     return 'email'
   }
 
-  async send(userId: string, message: string, options?: Record<string, any>): Promise<void> {
+  async send(userId: string, message: string | any, options?: Record<string, any>): Promise<void> {
     if (!this.transporter) {
       throw new Error('Email adapter not configured')
     }
@@ -26,13 +26,14 @@ export class EmailAdapter implements NotificationAdapter {
     try {
       const emailTo = options?.emailTo || userId
       const subject = options?.subject || 'Scraping Results'
+      const messageStr = typeof message === 'string' ? message : JSON.stringify(message, null, 2)
 
       await this.transporter.sendMail({
         from: this.configService.get('EMAIL_FROM', 'noreply@scraper.local'),
         to: emailTo,
         subject,
-        html: this.formatEmailBody(message),
-        text: message,
+        html: this.formatEmailBody(messageStr),
+        text: messageStr,
       })
 
       this.logger.log(`Email sent successfully to ${emailTo}`)

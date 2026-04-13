@@ -14,10 +14,10 @@ export interface NotificationAdapter {
   /**
    * Envía un mensaje a través del canal
    * @param userId ID del usuario
-   * @param message Contenido del mensaje
+   * @param message Contenido del mensaje (puede ser string u objeto)
    * @param options Opciones específicas del canal
    */
-  send(userId: string, message: string, options?: Record<string, any>): Promise<void>
+  send(userId: string, message: string | any, options?: Record<string, any>): Promise<void>
 
   /**
    * Verifica si el usuario tiene este canal configurado

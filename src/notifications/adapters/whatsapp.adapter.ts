@@ -22,12 +22,14 @@ export class WhatsAppAdapter implements NotificationAdapter {
     return 'whatsapp'
   }
 
-  async send(userId: string, message: string, options?: Record<string, any>): Promise<void> {
+  async send(userId: string, message: string | any, options?: Record<string, any>): Promise<void> {
+    // Convert message to string if it's an object
+    const messageStr = typeof message === 'string' ? message : JSON.stringify(message, null, 2)
     let lastError: Error | null = null
 
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
-        await this.sendToGateway(userId, message)
+        await this.sendToGateway(userId, messageStr)
         this.logger.log(`WhatsApp message sent successfully to ${userId}`)
         return
       } catch (error) {
