@@ -31,8 +31,9 @@ export class NotionAdapter implements NotificationAdapter {
 
       // Only send if Notion is configured
       if (!notionIntegrationToken) {
-        this.logger.warn('NOTION_INTEGRATION_TOKEN not configured, skipping Notion notification')
-        return
+        const error = 'NOTION_INTEGRATION_TOKEN not configured - cannot send to Notion'
+        this.logger.error(error)
+        throw new Error(error)  // ✨ CHANGED: Throw instead of silent return
       }
 
       // Prepare payload for Notion service

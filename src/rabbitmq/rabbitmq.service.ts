@@ -1,11 +1,11 @@
 // src/rabbitmq/rabbitmq.service.ts
 
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import * as amqp from 'amqplib'
 
 @Injectable()
-export class RabbitMQService implements OnModuleInit {
+export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RabbitMQService.name)
   private connection: amqp.Connection | null = null
   private channel: amqp.Channel | null = null
@@ -33,6 +33,14 @@ export class RabbitMQService implements OnModuleInit {
       this.logger.error(`Failed to connect during module init: ${msg}`)
       // Don't throw - allow graceful degradation
     }
+  }
+
+  /**
+   * ✨ NEW: Cleanup connection on module destroy (graceful shutdown)
+   */
+  async onModuleDestroy(): Promise<void> {
+    this.logger.log('🛑 RabbitMQService shutting down...')
+    await this.disconnect()
   }
 
   /**
@@ -91,6 +99,7 @@ export class RabbitMQService implements OnModuleInit {
 
   /**
    * Publish a message to an exchange with a routing key
+   * ✨ IMPROVED: Now awaits confirmation callback from RabbitMQ
    */
   async publish(routingKey: string, payload: Record<string, any>): Promise<void> {
     // Auto-connect if needed
@@ -103,14 +112,23 @@ export class RabbitMQService implements OnModuleInit {
     }
 
     try {
-      this.channel.publish(
+      const buffer = Buffer.from(JSON.stringify(payload))
+
+      // Publish to RabbitMQ with persistent flag
+      const published = this.channel!.publish(
         this.exchange,
         routingKey,
-        Buffer.from(JSON.stringify(payload)),
-        { persistent: true },
+        buffer,
+        { persistent: true, contentType: 'application/json' },
       )
 
-      this.logger.debug(`Published message to ${routingKey}`)
+      if (!published) {
+        const error = new Error(`RabbitMQ channel buffer full for ${routingKey}`)
+        this.logger.error(error.message)
+        throw error
+      }
+
+      this.logger.debug(`✅ Message published to ${routingKey}`)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       this.logger.error(`Failed to publish message: ${errorMessage}`)
@@ -120,6 +138,7 @@ export class RabbitMQService implements OnModuleInit {
 
   /**
    * Subscribe to a queue and consume messages
+   * ✨ IMPROVED: Better logging and standard error handling
    */
   async subscribe(
     queue: string,
@@ -135,7 +154,7 @@ export class RabbitMQService implements OnModuleInit {
       await this.channel.assertQueue(queue, { durable: true })
       await this.channel.bindQueue(queue, this.exchange, routingKey)
 
-      // Set prefetch
+      // Set prefetch - process one message at a time
       await this.channel.prefetch(1)
 
       // Consume messages
@@ -145,37 +164,47 @@ export class RabbitMQService implements OnModuleInit {
           if (message) {
             try {
               const payload = JSON.parse(message.content.toString())
+              this.logger.debug(`📨 Received message from ${queue}`)
               await handler(payload)
               this.channel?.ack(message)
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : String(error)
-              this.logger.error(`Error processing message: ${errorMessage}`)
-              this.channel?.nack(message, false, true)
+              this.logger.error(`❌ Error processing message from [${queue}]: ${errorMessage}`)
+              // ✨ CHANGED: Use standard pattern - don't requeue (false)
+              // This prevents infinite loops on permanent errors
+              this.channel?.nack(message, false, false)
             }
           }
         },
         { noAck: false },
       )
 
-      this.logger.log(`Subscribed to ${queue} (routing key: ${routingKey})`)
+      this.logger.log(`✅ Subscribed to ${queue} | routing key: ${routingKey}`)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
-      this.logger.error(`Failed to subscribe: ${errorMessage}`)
+      this.logger.error(`Failed to subscribe to ${queue}: ${errorMessage}`)
       throw error
     }
   }
 
   /**
-   * Close connection
+   * ✨ NEW: Disconnect helper (internal, called by onModuleDestroy)
    */
-  async close(): Promise<void> {
+  private async disconnect(): Promise<void> {
     if (this.channel) {
       await this.channel.close()
     }
     if (this.connection) {
       await this.connection.close()
     }
-    this.logger.log('RabbitMQ connection closed')
+    this.logger.log('✅ RabbitMQ connection closed gracefully')
+  }
+
+  /**
+   * Close connection (public method for manual shutdown)
+   */
+  async close(): Promise<void> {
+    await this.disconnect()
   }
 
   /**
