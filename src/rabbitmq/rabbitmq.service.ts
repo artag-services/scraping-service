@@ -1,16 +1,18 @@
 // src/rabbitmq/rabbitmq.service.ts
 
-import { Injectable, Logger } from '@nestjs/common'
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import * as amqp from 'amqplib'
 
 @Injectable()
-export class RabbitMQService {
+export class RabbitMQService implements OnModuleInit {
   private readonly logger = new Logger(RabbitMQService.name)
   private connection: amqp.Connection | null = null
   private channel: amqp.Channel | null = null
   private readonly retryAttempts = 5
   private readonly retryDelay = 3000
+  private connecting = false
+  private connectPromise: Promise<void> | null = null
 
   private rabbitmqUrl: string
   private exchange: string
@@ -21,9 +23,47 @@ export class RabbitMQService {
   }
 
   /**
+   * Initialize connection on module init
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.connect()
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      this.logger.error(`Failed to connect during module init: ${msg}`)
+      // Don't throw - allow graceful degradation
+    }
+  }
+
+  /**
    * Connect to RabbitMQ with retries
    */
   async connect(retries: number = this.retryAttempts): Promise<void> {
+    // If already connecting, wait for that promise
+    if (this.connecting && this.connectPromise) {
+      await this.connectPromise
+      return
+    }
+
+    // If already connected, return
+    if (this.isConnected()) {
+      return
+    }
+
+    try {
+      this.connecting = true
+      this.connectPromise = this._doConnect(retries)
+      await this.connectPromise
+    } finally {
+      this.connecting = false
+      this.connectPromise = null
+    }
+  }
+
+  /**
+   * Internal connect implementation
+   */
+  private async _doConnect(retries: number): Promise<void> {
     try {
       this.logger.log(`🔌 Connecting to RabbitMQ at ${this.rabbitmqUrl}...`)
       this.connection = await amqp.connect(this.rabbitmqUrl)
@@ -40,7 +80,7 @@ export class RabbitMQService {
           `Failed to connect (retries left: ${retries}): ${errorMessage}. Retrying in ${this.retryDelay}ms...`,
         )
         await new Promise(resolve => setTimeout(resolve, this.retryDelay))
-        await this.connect(retries - 1)
+        await this._doConnect(retries - 1)
       } else {
         const errorMessage = error instanceof Error ? error.message : String(error)
         this.logger.error(`❌ Failed to connect to RabbitMQ after ${this.retryAttempts} attempts: ${errorMessage}`)
@@ -53,6 +93,11 @@ export class RabbitMQService {
    * Publish a message to an exchange with a routing key
    */
   async publish(routingKey: string, payload: Record<string, any>): Promise<void> {
+    // Auto-connect if needed
+    if (!this.isConnected()) {
+      await this.connect()
+    }
+
     if (!this.channel) {
       throw new Error('RabbitMQ channel not connected')
     }
