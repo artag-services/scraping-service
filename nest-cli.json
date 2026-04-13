@@ -1,0 +1,23 @@
+{
+  "name": "scraping-service",
+  "description": "Scraping microservice with Puppeteer and extensible adapters",
+  "version": "1.0.0",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "incremental": true,
+    "skipLibCheck": true,
+    "strictNullChecks": false,
+    "strictFunctionTypes": false,
+    "strictBindCallApply": false,
+    "strictPropertyInitialization": false,
+    "noImplicitAny": false,
+    "alwaysStrict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitReturns": false,
+    "noFallthroughCasesInSwitch": false
+  }
+}

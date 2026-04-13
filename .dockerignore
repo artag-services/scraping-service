@@ -1,0 +1,8 @@
+# Scraping Service
+
+Exclude everything except the source files and configuration
+
+dist
+node_modules
+.env.local
+.dockerignore
