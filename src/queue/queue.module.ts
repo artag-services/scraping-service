@@ -1,5 +1,14 @@
 import { Module } from '@nestjs/common'
 import { ScrapingListener } from './scraping.listener'
+import { RabbitMQModule } from '../rabbitmq/rabbitmq.module'
+import { PuppeteerScraper } from '../scraper/puppeteer.scraper'
+import { BrowserPool } from '../scraper/browser-pool'
+import { NotificationService } from '../notifications/notification.service'
+import { WhatsAppAdapter } from '../notifications/adapters/whatsapp.adapter'
+import { EmailAdapter } from '../notifications/adapters/email.adapter'
+import { NotionAdapter } from '../notifications/adapters/notion.adapter'
+import { SummaryService } from '../utils/summary.service'
+import { DataCleanupService } from '../utils/data-cleanup.service'
 
 /**
  * Queue Module
@@ -8,9 +17,35 @@ import { ScrapingListener } from './scraping.listener'
  * Currently contains:
  * - ScrapingListener: Handles scraping tasks and Notion responses
  *
- * Can be extended with more listeners as needed
+ * Imports all necessary dependencies so ScrapingListener can be instantiated
  */
 @Module({
-  providers: [ScrapingListener],
+  imports: [RabbitMQModule],
+  providers: [
+    // Core scrapers
+    BrowserPool,
+    PuppeteerScraper,
+
+    // Notification adapters
+    WhatsAppAdapter,
+    EmailAdapter,
+    NotionAdapter,
+
+    // Notification service with adapter injection
+    {
+      provide: NotificationService,
+      useFactory: (whatsappAdapter: WhatsAppAdapter, emailAdapter: EmailAdapter, notionAdapter: NotionAdapter) => {
+        return new NotificationService([whatsappAdapter, emailAdapter, notionAdapter])
+      },
+      inject: [WhatsAppAdapter, EmailAdapter, NotionAdapter],
+    },
+
+    // Utilities
+    SummaryService,
+    DataCleanupService,
+
+    // Listeners
+    ScrapingListener,
+  ],
 })
 export class QueueModule {}
