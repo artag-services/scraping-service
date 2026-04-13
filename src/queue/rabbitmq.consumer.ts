@@ -7,6 +7,7 @@ import { ScrapingMessage } from '../common/types'
 import { PuppeteerScraper } from '../scraper/puppeteer.scraper'
 import { NotificationService } from '../notifications/notification.service'
 import { SummaryService } from '../utils/summary.service'
+import { DataCleanupService } from '../utils/data-cleanup.service'
 import { RateLimiter } from '../rate-limit/rate-limiter'
 
 @Injectable()
@@ -25,6 +26,7 @@ export class RabbitMQConsumer implements OnModuleInit {
     private scraper: PuppeteerScraper,
     private notificationService: NotificationService,
     private summaryService: SummaryService,
+    private dataCleanupService: DataCleanupService,
     private rateLimiter: RateLimiter,
   ) {
     console.log('🔧 RabbitMQConsumer constructor called')
@@ -159,14 +161,34 @@ export class RabbitMQConsumer implements OnModuleInit {
         this.logger.log(`📊 Extracted data: ${JSON.stringify(result.data, null, 2)}`)
         console.log('✅ SCRAPING RESULT:', JSON.stringify(result.data, null, 2))
         
-        // Generar resumen inteligente
-        const summary = this.summaryService.summarizeWithHeader(result.data!, scrapingMessage.url)
+        // ✨ [NEW] PASO 1: Limpiar datos basura
+        const cleanedData = this.dataCleanupService.cleanup(result.data)
+        this.logger.log(`✨ Data cleaned: ${JSON.stringify(cleanedData, null, 2)}`)
+        
+        // ✨ [NEW] PASO 2: Enviar a Notion (async, no bloqueante)
+        try {
+          await this.notificationService.send(
+            'notion',
+            scrapingMessage.userId,
+            cleanedData,
+            { 
+              url: scrapingMessage.url,
+            }
+          )
+          this.logger.log(`✅ Notion notification sent for user ${scrapingMessage.userId}`)
+        } catch (notionError) {
+          this.logger.error(`⚠️ Failed to send Notion notification: ${notionError instanceof Error ? notionError.message : String(notionError)}`)
+          // No bloqueamos el flujo si Notion falla
+        }
+        
+        // PASO 3: Generar resumen inteligente y enviar por WhatsApp
+        const summary = this.summaryService.summarizeWithHeader(cleanedData as any, scrapingMessage.url)
         const chunks = this.summaryService.chunk(summary)
 
         this.logger.log(`📝 Generated summary with ${chunks.length} chunks`)
         console.log(`📝 SUMMARY (${chunks.length} chunks):`, summary.substring(0, 200) + '...')
 
-        // Enviar chunks
+        // Enviar chunks por WhatsApp
         for (let i = 0; i < chunks.length; i++) {
           const chunkMessage = `Parte ${i + 1}/${chunks.length}:\n\n${chunks[i]}`
           await this.sendNotification(
