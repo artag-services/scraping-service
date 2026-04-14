@@ -4,12 +4,9 @@ import { RabbitMQModule } from '../rabbitmq/rabbitmq.module'
 import { PuppeteerScraper } from '../scraper/puppeteer.scraper'
 import { AutoScraper } from '../scraper/auto-scraper'
 import { BrowserPool } from '../scraper/browser-pool'
-import { NotificationService } from '../notifications/notification.service'
-import { WhatsAppAdapter } from '../notifications/adapters/whatsapp.adapter'
-import { EmailAdapter } from '../notifications/adapters/email.adapter'
-import { NotionAdapter } from '../notifications/adapters/notion.adapter'
 import { SummaryService } from '../utils/summary.service'
 import { DataCleanupService } from '../utils/data-cleanup.service'
+import { GatewayClient } from '../http/gateway.client'
 
 /**
  * Queue Module
@@ -19,6 +16,9 @@ import { DataCleanupService } from '../utils/data-cleanup.service'
  * - ScrapingListener: Handles scraping tasks and Notion responses
  *
  * Imports all necessary dependencies so ScrapingListener can be instantiated
+ * 
+ * ✨ REMOVED: NotificationService and all adapters
+ *    Now using GatewayClient to communicate via HTTP
  */
 @Module({
   imports: [RabbitMQModule],
@@ -28,19 +28,8 @@ import { DataCleanupService } from '../utils/data-cleanup.service'
     AutoScraper,
     PuppeteerScraper,
 
-    // Notification adapters
-    WhatsAppAdapter,
-    EmailAdapter,
-    NotionAdapter,
-
-    // Notification service with adapter injection
-    {
-      provide: NotificationService,
-      useFactory: (whatsappAdapter: WhatsAppAdapter, emailAdapter: EmailAdapter, notionAdapter: NotionAdapter) => {
-        return new NotificationService([whatsappAdapter, emailAdapter, notionAdapter])
-      },
-      inject: [WhatsAppAdapter, EmailAdapter, NotionAdapter],
-    },
+    // HTTP Client for Gateway communication
+    GatewayClient,
 
     // Utilities
     SummaryService,

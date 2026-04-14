@@ -17,11 +17,15 @@ import { RateLimiter } from './rate-limit/rate-limiter'
  *
  * Architecture:
  * - ConfigModule: Global config (environment variables)
- * - RabbitMQModule: Global RabbitMQ service (all inter-service communication)
- * - QueueModule: Queue listeners with all services (ScrapingListener handles both scraping tasks + Notion responses)
+ * - RabbitMQModule: Global RabbitMQ service (for listening to scraping tasks)
+ * - QueueModule: Queue listeners and all services (ScrapingListener handles scraping tasks)
  *
- * ✅ All inter-service communication via RabbitMQ (requirement met)
- * ✅ Follows standard pattern from Notion/WhatsApp/Identity services
+ * ✨ SIMPLIFIED: Removed all notification adapters and services
+ *    Now uses GatewayClient to communicate with Gateway via HTTP
+ *    All inter-service communication flows through Gateway
+ *
+ * ✅ Scraping service now fully decoupled from other services
+ * ✅ Single point of integration: Gateway via HTTP
  */
 @Module({
   imports: [
@@ -32,7 +36,7 @@ import { RateLimiter } from './rate-limit/rate-limiter'
     }),
 
     // RabbitMQ (global, available to all modules)
-    // Handles all inter-service communication
+    // Only used for listening to scraping tasks
     RabbitMQModule,
 
     // Queue listeners with all services they need
