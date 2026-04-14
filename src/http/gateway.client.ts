@@ -66,7 +66,7 @@ export class GatewayClient {
       this.logger.log(`   - data keys: ${Object.keys(payload.data).join(', ')}`)
 
       // Prepare request to Gateway
-      const endpoint = '/api/scraping/notify-notion'
+      const endpoint = '/api/v1/scraping/notify-notion'
       this.logger.log(`🚀 POST ${this.gatewayUrl}${endpoint}`)
 
       // Send to Gateway (no await in critical path - async notification)
@@ -82,9 +82,9 @@ export class GatewayClient {
       const errorMessage = error instanceof Error ? error.message : String(error)
       const statusCode = axios.isAxiosError(error) ? error.response?.status : 'N/A'
 
-      this.logger.error(`❌ GatewayClient.notifyNotion() - FAILED`)
-      this.logger.error(`   - endpoint: /api/scraping/notify-notion`)
-      this.logger.error(`   - error: ${errorMessage}`)
+       this.logger.error(`❌ GatewayClient.notifyNotion() - FAILED`)
+       this.logger.error(`   - endpoint: /api/v1/scraping/notify-notion`)
+       this.logger.error(`   - error: ${errorMessage}`)
       this.logger.error(`   - status: ${statusCode}`)
       this.logger.error(`   - userId: ${payload.userId}`)
       this.logger.error(`   - title: ${payload.title}`)
