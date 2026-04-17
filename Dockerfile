@@ -47,7 +47,7 @@ COPY package.json pnpm-lock.yaml* ./
 RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true pnpm install --prod $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
 
 # Copy Prisma schema if it exists (for future use)
-COPY prisma ./prisma 2>/dev/null || true
+# (Skipping Prisma for now - not needed in scraping service)
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
