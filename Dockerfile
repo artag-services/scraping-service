@@ -45,6 +45,9 @@ COPY package.json pnpm-lock.yaml* ./
 # We need devDependencies because the built dist/ may reference them at runtime
 RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false pnpm install $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
 
+# Explicitly download Chromium using Puppeteer CLI (in case postinstall didn't run)
+RUN npx puppeteer browsers install chrome
+
 # Copy Prisma schema if it exists (for future use)
 # (Skipping Prisma for now - not needed in scraping service)
 
