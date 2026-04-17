@@ -9,10 +9,10 @@ WORKDIR /app
 RUN npm install -g pnpm@10.18.0
 
 # Copy package files
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml* ./
 
 # Install dependencies (including dev dependencies for build)
-RUN pnpm install --frozen-lockfile
+RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
 
 # Copy application source
 COPY . .
@@ -41,10 +41,10 @@ RUN npm install -g pnpm@10.18.0
 # Copy entrypoint first
 COPY entrypoint.sh ./
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml* ./
 
 # Install only production dependencies (no dev dependencies)
-RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true pnpm install --prod --frozen-lockfile
+RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true pnpm install --prod $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
 
 # Copy Prisma schema if it exists (for future use)
 COPY prisma ./prisma 2>/dev/null || true
