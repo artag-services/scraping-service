@@ -41,8 +41,9 @@ COPY entrypoint.sh ./
 
 COPY package.json pnpm-lock.yaml* ./
 
-# Install only production dependencies (no dev dependencies)
-RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false pnpm install --prod $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
+# Install ALL dependencies (including dev for build tools that might be needed)
+# We need devDependencies because the built dist/ may reference them at runtime
+RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false pnpm install $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
 
 # Copy Prisma schema if it exists (for future use)
 # (Skipping Prisma for now - not needed in scraping service)
@@ -59,4 +60,4 @@ RUN chmod +x /app/entrypoint.sh
 EXPOSE 3008
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["pnpm", "start"]
+CMD ["pnpm", "start:prod"]
