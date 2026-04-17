@@ -27,10 +27,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install Chromium and dependencies from Alpine repositories (minimal footprint)
+# Install runtime dependencies for Puppeteer
 RUN apk add --no-cache \
-  chromium \
-  noto-sans-cjk \
   netcat-openbsd \
   ca-certificates \
   bash
@@ -44,7 +42,7 @@ COPY entrypoint.sh ./
 COPY package.json pnpm-lock.yaml* ./
 
 # Install only production dependencies (no dev dependencies)
-RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true pnpm install --prod $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
+RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false pnpm install --prod $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
 
 # Copy Prisma schema if it exists (for future use)
 # (Skipping Prisma for now - not needed in scraping service)
@@ -52,9 +50,8 @@ RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true pnpm install --prod $(if [ -f pnpm-loc
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
 
-# Set environment variables for Chromium
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+# Set environment variables for Puppeteer
+# Puppeteer will download Chromium during installation
 ENV NODE_ENV=production
 
 RUN chmod +x /app/entrypoint.sh
