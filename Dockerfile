@@ -27,7 +27,7 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install runtime dependencies for Puppeteer
+# Install runtime dependencies
 RUN apk add --no-cache \
   netcat-openbsd \
   ca-certificates \
@@ -36,18 +36,13 @@ RUN apk add --no-cache \
 # Install pnpm for production
 RUN npm install -g pnpm@10.18.0
 
-# Pre-download Chromium FIRST (before copying app files)
-# This way the cache layer persists in the production stage
-WORKDIR /app
-ENV PUPPETEER_CACHE_DIR=/root/.cache/puppeteer
-RUN npx -y puppeteer@21 browsers install chrome
-
 # Copy entrypoint
 COPY entrypoint.sh ./
 
 COPY package.json pnpm-lock.yaml* ./
 
 # Install dependencies
+# Skip Chromium download - use browserless/chrome service instead
 RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true pnpm install $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
 
 # Copy Prisma schema if it exists (for future use)
