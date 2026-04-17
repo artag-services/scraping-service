@@ -36,17 +36,19 @@ RUN apk add --no-cache \
 # Install pnpm for production
 RUN npm install -g pnpm@10.18.0
 
-# Copy entrypoint first
+# Pre-download Chromium FIRST (before copying app files)
+# This way the cache layer persists in the production stage
+WORKDIR /app
+ENV PUPPETEER_CACHE_DIR=/root/.cache/puppeteer
+RUN npx -y puppeteer@21 browsers install chrome
+
+# Copy entrypoint
 COPY entrypoint.sh ./
 
 COPY package.json pnpm-lock.yaml* ./
 
-# Install ALL dependencies (including dev for build tools that might be needed)
-# We need devDependencies because the built dist/ may reference them at runtime
-RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false pnpm install $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
-
-# Explicitly download Chromium using Puppeteer CLI (in case postinstall didn't run)
-RUN npx puppeteer browsers install chrome
+# Install dependencies
+RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true pnpm install $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
 
 # Copy Prisma schema if it exists (for future use)
 # (Skipping Prisma for now - not needed in scraping service)
