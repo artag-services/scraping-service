@@ -59,5 +59,5 @@ RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 3008
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["bash", "/app/entrypoint.sh"]
 CMD ["pnpm", "start:prod"]
