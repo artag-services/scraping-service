@@ -3,6 +3,7 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import puppeteer from 'puppeteer'
+import puppeteerExtra from 'puppeteer-extra'
 import { Browser } from 'puppeteer'
 import { configureStealth, BROWSER_LAUNCH_OPTIONS } from './stealth.config'
 
@@ -30,14 +31,30 @@ export class BrowserPool implements OnModuleInit, OnModuleDestroy {
    * Inicializa el pool de browsers
    */
   private async initializePool(): Promise<void> {
-    const puppeteerExtra = configureStealth()
+    const browserlessEndpoint = this.configService.get<string>('BROWSERLESS_WS_ENDPOINT')
+    const isUsingBrowserless = !!browserlessEndpoint
 
     try {
-      for (let i = 0; i < this.maxPoolSize; i++) {
-        const browser = await puppeteerExtra.launch(BROWSER_LAUNCH_OPTIONS)
-        this.pool.push(browser)
+      if (isUsingBrowserless) {
+        this.logger.log(`Connecting to Browserless service at ${browserlessEndpoint}`)
+        // Conexión a browserless para Docker
+        for (let i = 0; i < this.maxPoolSize; i++) {
+          const browser = await puppeteer.connect({
+            browserWSEndpoint: browserlessEndpoint,
+          })
+          this.pool.push(browser)
+        }
+        this.logger.log(`Browser pool initialized with ${this.maxPoolSize} Browserless instances`)
+      } else {
+        this.logger.log(`Launching local Puppeteer browsers (BROWSERLESS_WS_ENDPOINT not set)`)
+        // Lanzamiento local para desarrollo
+        const stealthPuppeteer = configureStealth()
+        for (let i = 0; i < this.maxPoolSize; i++) {
+          const browser = await stealthPuppeteer.launch(BROWSER_LAUNCH_OPTIONS)
+          this.pool.push(browser)
+        }
+        this.logger.log(`Browser pool initialized with ${this.maxPoolSize} local instances`)
       }
-       this.logger.log(`Browser pool initialized with ${this.maxPoolSize} instances`)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       this.logger.error(`Failed to initialize browser pool: ${errorMessage}`)
