@@ -4,39 +4,23 @@ import { RabbitMQModule } from '../rabbitmq/rabbitmq.module'
 import { PuppeteerScraper } from '../scraper/puppeteer.scraper'
 import { AutoScraper } from '../scraper/auto-scraper'
 import { BrowserPool } from '../scraper/browser-pool'
-import { SummaryService } from '../utils/summary.service'
-import { DataCleanupService } from '../utils/data-cleanup.service'
-import { GatewayClient } from '../http/gateway.client'
+import { SessionModule } from '../sessions/session.module'
+import { JobsModule } from '../jobs/jobs.module'
 
 /**
- * Queue Module
- * Registers all queue listeners/consumers for the scraping service
+ * Wires the scraping pipeline:
+ *  - BrowserPool (page-based pool)
+ *  - AutoScraper (heuristic extractor)
+ *  - PuppeteerScraper (strategy executor)
+ *  - ScrapingListener (RabbitMQ consumer + lifecycle event publisher)
  *
- * Currently contains:
- * - ScrapingListener: Handles scraping tasks and Notion responses
- *
- * Imports all necessary dependencies so ScrapingListener can be instantiated
- * 
- * ✨ REMOVED: NotificationService and all adapters
- *    Now using GatewayClient to communicate via HTTP
+ * Removed: GatewayClient + SummaryService + DataCleanupService — the new
+ * pipeline publishes raw results to channels.scraping.events.completed; any
+ * downstream cleanup/summarization belongs in the consumer (gateway SSE
+ * bridge, notion-service, etc.), not here.
  */
 @Module({
-  imports: [RabbitMQModule],
-  providers: [
-    // Core scrapers (in dependency order)
-    BrowserPool,
-    AutoScraper,
-    PuppeteerScraper,
-
-    // HTTP Client for Gateway communication
-    GatewayClient,
-
-    // Utilities
-    SummaryService,
-    DataCleanupService,
-
-    // Listeners
-    ScrapingListener,
-  ],
+  imports: [RabbitMQModule, SessionModule, JobsModule],
+  providers: [BrowserPool, AutoScraper, PuppeteerScraper, ScrapingListener],
 })
 export class QueueModule {}

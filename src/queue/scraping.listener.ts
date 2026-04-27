@@ -1,37 +1,24 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
+import { v4 as uuid } from 'uuid'
 import { RabbitMQService } from '../rabbitmq/rabbitmq.service'
 import { QUEUES, ROUTING_KEYS } from '../rabbitmq/constants/queues'
 import { PuppeteerScraper } from '../scraper/puppeteer.scraper'
-import { SummaryService } from '../utils/summary.service'
-import { DataCleanupService } from '../utils/data-cleanup.service'
-import { GatewayClient } from '../http/gateway.client'
-import { ScrapingMessage } from '../common/types'
+import { JobsService } from '../jobs/jobs.service'
+import {
+  ScrapingTaskRequest,
+  ScrapingTaskMessage,
+  ScrapingResult,
+  RpcEnvelope,
+} from '../common/types'
 
 /**
- * Consolidated Scraping Listener
- * 
- * SIMPLIFIED ARCHITECTURE:
- * Scraping Service is now DECOUPLED from other microservices.
- * All communication goes through Gateway via HTTP (not RabbitMQ).
+ * Single entry point that consumes RabbitMQ messages from the gateway:
+ *  - `channels.scraping.task` (fire-and-forget) — runs the scraping pipeline
+ *  - `channels.scraping.list/get/delete` (RPC) — DB CRUD
+ *  - `channels.scraping.cleanup-expired` (RPC) — delete past-expiresAt jobs
  *
- * FLOW 1: Scraping Tasks
- * - Listens on: scraping.task queue (RabbitMQ)
- * - Process: Scrape URL → Clean data → HTTP POST to Gateway → Generate summary
- * - Gateway handles: Publishing to Notion, receiving responses, sending WhatsApp
- *
- * FLOW 2: Notion Responses (REMOVED)
- * - No longer listening for Notion responses
- * - Gateway listener handles WhatsApp notifications
- *
- * NOTE: Simplified from 2 listeners to 1
- * Follows microservices principle: each service has single responsibility
- * 
- * ✨ CHANGES:
- * - Removed: NotificationService (now in Gateway)
- * - Added: GatewayClient for HTTP communication
- * - Removed: FLOW 2 listener
- * - Simplified: No WhatsApp sending in scraping service
+ * For tasks: persists job → publishes lifecycle events → optionally dispatches
+ * to notion/whatsapp/email if `output.targets` includes them.
  */
 @Injectable()
 export class ScrapingListener implements OnModuleInit {
@@ -40,136 +27,194 @@ export class ScrapingListener implements OnModuleInit {
   constructor(
     private readonly rabbitmq: RabbitMQService,
     private readonly scraper: PuppeteerScraper,
-    private readonly summaryService: SummaryService,
-    private readonly dataCleanupService: DataCleanupService,
-    private readonly gatewayClient: GatewayClient,
-    private readonly configService: ConfigService,
-  ) {
-    this.logger.log(`ScrapingListener initialized`)
-  }
+    private readonly jobs: JobsService,
+  ) {}
 
-  /**
-   * Auto-subscribe to scraping tasks queue when module initializes
-   */
   async onModuleInit(): Promise<void> {
-    try {
-      this.logger.log('🚀 ScrapingListener initializing...')
-
-      // Subscribe to scraping tasks queue
-      await this.rabbitmq.subscribe(
-        QUEUES.SCRAPING_TASK,
-        ROUTING_KEYS.SCRAPING_TASK,
-        (payload) => this.handleScrapingTask(payload),
-      )
-      this.logger.log(`✅ Subscribed to ${QUEUES.SCRAPING_TASK} queue`)
-
-      this.logger.log('✅ ScrapingListener initialized successfully - Waiting for scraping tasks...')
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error)
-      this.logger.error(`❌ Failed to initialize ScrapingListener: ${msg}`)
-      throw error
-    }
-  }
-
-  /**
-   * FLOW 1: Handle scraping tasks
-   *
-   * Steps:
-   * 1. Scrape the URL
-   * 2. Clean the data (remove trash, duplicates, etc)
-   * 3. Send cleaned data to Gateway (asynchronously)
-   * 4. Generate AI summary
-   * 5. That's it! Gateway handles everything else (Notion, WhatsApp)
-   *
-   * NOTE: All communication with other services is now via Gateway
-   */
-  private async handleScrapingTask(payload: Record<string, any>): Promise<void> {
-    const scrapingMessage = payload as unknown as ScrapingMessage
-
-    this.logger.log(
-      `📨 Received scraping task | requestId=${scrapingMessage.requestId}, url=${scrapingMessage.url}, userId=${scrapingMessage.userId}`,
+    await this.rabbitmq.subscribe(QUEUES.TASK, ROUTING_KEYS.TASK, (p) => this.handleTask(p))
+    await this.rabbitmq.subscribe(QUEUES.LIST, ROUTING_KEYS.LIST, (p) => this.handleRpc(p, 'list'))
+    await this.rabbitmq.subscribe(QUEUES.GET, ROUTING_KEYS.GET, (p) => this.handleRpc(p, 'get'))
+    await this.rabbitmq.subscribe(QUEUES.DELETE, ROUTING_KEYS.DELETE, (p) =>
+      this.handleRpc(p, 'delete'),
+    )
+    await this.rabbitmq.subscribe(QUEUES.CLEANUP_EXPIRED, ROUTING_KEYS.CLEANUP_EXPIRED, (p) =>
+      this.handleRpc(p, 'cleanup'),
     )
 
+    this.logger.log('✅ ScrapingListener ready — listening on task + list/get/delete/cleanup queues')
+  }
+
+  // ─────────────────────────── Task pipeline ───────────────────────────
+
+  private async handleTask(payload: Record<string, unknown>): Promise<void> {
+    const request = payload as unknown as ScrapingTaskRequest & { jobId?: string }
+    const jobId = request.jobId ?? uuid()
+    const taskMessage: ScrapingTaskMessage = { ...request, jobId }
+
+    this.logger.log(`📨 Task ${jobId} → ${request.url} [${request.strategy}]`)
+
     try {
-      // ========== STEP 1: Perform scraping ==========
-      this.logger.log(`🕷️ Starting scraping for ${scrapingMessage.url}...`)
-      const result = await this.scraper.scrape(
-        scrapingMessage.requestId,
-        scrapingMessage.url,
-        scrapingMessage.instructions,
-        scrapingMessage.userId,
-      )
+      // 1) Persist as QUEUED (with credentials redacted)
+      await this.jobs.createQueued({ ...request, jobId })
+      this.publishEvent(ROUTING_KEYS.EVENT_QUEUED, {
+        jobId,
+        url: request.url,
+        userId: request.userId,
+      })
 
-      if (!result.success) {
-        this.logger.error(`❌ Scraping failed: ${result.error}`)
-        // Don't send notification - Gateway would have handled it if enabled
-        throw new Error(`Scraping failed: ${result.error}`)
+      // 2) Mark RUNNING + emit
+      await this.jobs.markStarted(jobId)
+      this.publishEvent(ROUTING_KEYS.EVENT_STARTED, {
+        jobId,
+        url: request.url,
+        userId: request.userId,
+      })
+
+      // 3) Run scraper
+      const result = await this.scraper.run(taskMessage)
+
+      // 4) Persist result + emit completion event
+      if (result.success) {
+        await this.jobs.markCompleted(jobId, result)
+        this.publishEvent(ROUTING_KEYS.EVENT_COMPLETED, this.eventPayload(result))
+        this.dispatchOutputs(taskMessage, result)
+      } else {
+        await this.jobs.markFailed(jobId, result)
+        this.publishEvent(ROUTING_KEYS.EVENT_FAILED, this.eventPayload(result))
       }
-
-      this.logger.log(`✅ Scraping successful for ${scrapingMessage.url}`)
-      this.logger.debug(
-        `📊 Raw data extracted: ${JSON.stringify(result.data, null, 2).substring(0, 500)}...`,
-      )
-
-      // ========== STEP 2: Clean data ==========
-      const cleanedData = this.dataCleanupService.cleanup(result.data)
-      this.logger.log(
-        `✨ Data cleaned: title="${cleanedData.title}", sections=${cleanedData.sections?.length || 0}, links=${cleanedData.links?.length || 0}`,
-      )
-
-      // ========== STEP 3: Send to Gateway (via HTTP) ==========
-      // Gateway will handle: Publishing to Notion, listening for responses, sending WhatsApp
-      try {
-        this.logger.log(`📤 STEP 3: Sending cleaned data to Gateway...`)
-        this.logger.log(`   - cleanedData keys: ${Object.keys(cleanedData).join(', ')}`)
-        this.logger.log(`   - cleanedData.title: ${cleanedData.title}`)
-        this.logger.log(`   - sections count: ${cleanedData.sections?.length || 0}`)
-        this.logger.log(`   - links count: ${cleanedData.links?.length || 0}`)
-
-        const gatewayResponse = await this.gatewayClient.notifyNotion({
-          userId: scrapingMessage.userId,
-          title: cleanedData.title || 'Scraping Result',
-          url: scrapingMessage.url,
-          data: cleanedData,
-        })
-
-        if (gatewayResponse) {
-          this.logger.log(`✅ Gateway accepted notification`)
-          this.logger.log(`   - requestId: ${gatewayResponse.requestId}`)
-          this.logger.log(`   - message: ${gatewayResponse.message}`)
-        } else {
-          this.logger.error(`⚠️ Gateway notification failed (see GatewayClient logs for details)`)
-          // Don't throw - continue with summary generation
-        }
-      } catch (gatewayError) {
-        const err = gatewayError instanceof Error ? gatewayError.message : String(gatewayError)
-        this.logger.error(`❌ STEP 3 FAILED: Failed to notify Gateway`)
-        this.logger.error(`   - error: ${err}`)
-        this.logger.error(`   - userId: ${scrapingMessage.userId}`)
-        this.logger.error(`   - title: ${cleanedData.title}`)
-        // Continue anyway - summary will still be generated
-      }
-
-      // ========== STEP 4: Generate summary ==========
-      // NOTE: WhatsApp sending is now handled by Gateway
-      this.logger.log(`📝 STEP 4: Generating AI summary...`)
-      const summary = this.summaryService.summarizeWithHeader(cleanedData as any, scrapingMessage.url)
-      const chunks = this.summaryService.chunk(summary)
-
-      this.logger.log(`📝 Generated summary: ${chunks.length} chunks`)
-      this.logger.log(`   - total characters: ${summary.length}`)
-
-      // ========== STEP 5: Complete ==========
-      this.logger.log(
-        `✅ Scraping task completed successfully | requestId=${scrapingMessage.requestId}, user=${scrapingMessage.userId}`,
-      )
-      this.logger.log(`   - Gateway will handle: Notion page creation, WhatsApp notification`)
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error)
-      this.logger.error(
-        `❌ Error processing scraping task (${scrapingMessage.requestId}): ${msg}`,
-      )
-      throw error // Re-throw so RabbitMQ can nack and handle retry
+    } catch (err) {
+      const message = (err as Error).message
+      this.logger.error(`Pipeline error for job ${jobId}: ${message}`)
+      this.publishEvent(ROUTING_KEYS.EVENT_FAILED, {
+        jobId,
+        url: request.url,
+        userId: request.userId,
+        success: false,
+        error: message,
+      })
+      throw err
     }
+  }
+
+  /**
+   * After a successful scrape, dispatch the result to additional services
+   * if the user requested them via `output.targets`.
+   */
+  private dispatchOutputs(task: ScrapingTaskMessage, result: ScrapingResult): void {
+    const targets = task.output?.targets ?? ['event']
+    if (!targets.length) return
+
+    const data = result.data ?? {}
+    const title = (data as { title?: string }).title ?? 'Scraping Result'
+
+    if (targets.includes('notion') && task.output?.notion) {
+      this.rabbitmq.publish(ROUTING_KEYS.NOTION_SEND, {
+        messageId: result.jobId,
+        operation: 'create_page',
+        message: title,
+        metadata: {
+          parent_page_id: task.output.notion.parentPageId,
+          title: task.output.notion.title ?? title,
+          icon: task.output.notion.icon ?? '🔗',
+          url: task.url,
+          userId: task.userId,
+          scrapedData: data,
+        },
+      })
+      this.logger.log(`📨 Dispatched to notion for job ${result.jobId}`)
+    }
+
+    if (targets.includes('whatsapp') && task.output?.whatsapp) {
+      const summary = `✅ Scraping completado\n📄 ${title}\n🔗 ${task.url}`
+      this.rabbitmq.publish(ROUTING_KEYS.WHATSAPP_SEND, {
+        messageId: result.jobId,
+        recipients: [task.output.whatsapp.to],
+        message: summary,
+      })
+      this.logger.log(`📨 Dispatched to whatsapp for job ${result.jobId}`)
+    }
+
+    if (targets.includes('email') && task.output?.email) {
+      this.rabbitmq.publish(ROUTING_KEYS.EMAIL_SEND, {
+        to: task.output.email.to,
+        subject: task.output.email.subject ?? `Scraping: ${title}`,
+        html: `<h1>${title}</h1><p>URL: <a href="${task.url}">${task.url}</a></p><pre>${JSON.stringify(
+          data,
+          null,
+          2,
+        ).slice(0, 5000)}</pre>`,
+      })
+      this.logger.log(`📨 Dispatched to email for job ${result.jobId}`)
+    }
+  }
+
+  private eventPayload(result: ScrapingResult): Record<string, unknown> {
+    return {
+      jobId: result.jobId,
+      userId: result.userId,
+      url: result.url,
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      startedAt: result.startedAt,
+      completedAt: result.completedAt,
+      durationMs: result.durationMs,
+    }
+  }
+
+  private publishEvent(routingKey: string, payload: Record<string, unknown>): void {
+    try {
+      this.rabbitmq.publish(routingKey, payload)
+    } catch (err) {
+      this.logger.warn(`Failed to publish event to ${routingKey}: ${(err as Error).message}`)
+    }
+  }
+
+  // ─────────────────────────── RPC handler ───────────────────────────
+
+  private async handleRpc(payload: Record<string, unknown>, op: string): Promise<void> {
+    const env = payload as RpcEnvelope
+    try {
+      const data = await this.dispatch(op, env)
+      if (env.correlationId) this.respond(env.correlationId, true, data)
+    } catch (err) {
+      const message = (err as Error).message
+      this.logger.error(`[${op}] failed: ${message}`)
+      if (env.correlationId) this.respond(env.correlationId, false, { error: message })
+    }
+  }
+
+  private async dispatch(op: string, env: RpcEnvelope): Promise<unknown> {
+    switch (op) {
+      case 'list': {
+        const { limit, userId } = env as { limit?: number; userId?: string }
+        return { jobs: await this.jobs.list(limit ?? 50, userId) }
+      }
+      case 'get': {
+        const { id } = env as { id: string }
+        if (!id) throw new Error('id is required')
+        return { job: await this.jobs.get(id) }
+      }
+      case 'delete': {
+        const { id } = env as { id: string }
+        if (!id) throw new Error('id is required')
+        await this.jobs.remove(id)
+        return { id, deleted: true }
+      }
+      case 'cleanup': {
+        const count = await this.jobs.cleanupExpired()
+        return { deleted: count }
+      }
+      default:
+        throw new Error(`Unknown op: ${op}`)
+    }
+  }
+
+  private respond(correlationId: string, success: boolean, data: unknown): void {
+    this.rabbitmq.publish(ROUTING_KEYS.RESPONSE, {
+      correlationId,
+      success,
+      ...(typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : { data }),
+    })
   }
 }

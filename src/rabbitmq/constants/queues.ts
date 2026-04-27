@@ -1,31 +1,45 @@
 /**
- * Centralized RabbitMQ queue and routing key constants for Scrapping Service
- * Matches standard pattern used in Notion, WhatsApp, Identity services
+ * RabbitMQ contracts for the scrapping microservice.
  *
- * IMPORTANT: These constants ensure consistency across all inter-service communication
+ * Pattern (per project skill):
+ *  - Inbound from gateway: tasks (fire-and-forget) + RPC reads (with correlationId)
+ *  - Outbound lifecycle events: queued/started/completed/failed broadcast to
+ *    `channels.scraping.events.*` — the gateway's SSE bridge consumes these
+ *    and forwards to subscribed frontend clients.
+ *  - Outbound RPC responses: channels.scraping.response (correlationId echo)
+ *  - Optional outbound dispatches: when output.targets includes notion / whatsapp / email,
+ *    we publish to those services' standard inbound routing keys.
  */
 
-export const RABBITMQ_EXCHANGE = 'channels'
+export const RABBITMQ_EXCHANGE = process.env.RABBITMQ_EXCHANGE ?? 'channels'
 
-/**
- * Routing keys for publishing messages to the exchange
- */
 export const ROUTING_KEYS = {
-  // Scraping tasks from external sources (gateway, scheduler, etc)
-  SCRAPING_TASK: 'channels.scraping.task',
+  // Inbound: gateway → scrapping
+  TASK: 'channels.scraping.task',
+  LIST: 'channels.scraping.list',
+  GET: 'channels.scraping.get',
+  DELETE: 'channels.scraping.delete',
+  CLEANUP_EXPIRED: 'channels.scraping.cleanup-expired',
 
-  // Notion integration
+  // Outbound: scrapping → gateway (RPC responses)
+  RESPONSE: 'channels.scraping.response',
+
+  // Outbound broadcast lifecycle events (consumed by gateway SSE bridge)
+  EVENT_QUEUED: 'channels.scraping.events.queued',
+  EVENT_STARTED: 'channels.scraping.events.started',
+  EVENT_COMPLETED: 'channels.scraping.events.completed',
+  EVENT_FAILED: 'channels.scraping.events.failed',
+
+  // Outbound dispatches when output.targets includes these services
   NOTION_SEND: 'channels.notion.send',
-  SCRAPPING_NOTION_RESPONSE: 'channels.scrapping.notion-response',
+  WHATSAPP_SEND: 'channels.whatsapp.send',
+  EMAIL_SEND: 'channels.email.send',
 } as const
 
-/**
- * Queue names that this service consumes from
- */
 export const QUEUES = {
-  // Scraping service consumes scraping tasks from this queue
-  SCRAPING_TASK: 'scraping.task',
-
-  // Scraping service consumes Notion responses from this queue
-  SCRAPPING_NOTION_RESPONSE: 'scrapping.notion-response',
+  TASK: 'scraping.task',
+  LIST: 'scraping.list',
+  GET: 'scraping.get',
+  DELETE: 'scraping.delete',
+  CLEANUP_EXPIRED: 'scraping.cleanup-expired',
 } as const

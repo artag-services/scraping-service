@@ -1,140 +1,136 @@
-// src/scraper/browser-pool.ts
-
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import puppeteer from 'puppeteer'
-import puppeteerExtra from 'puppeteer-extra'
-import { Browser } from 'puppeteer'
+import puppeteer, { Browser, Page } from 'puppeteer'
 import { configureStealth, BROWSER_LAUNCH_OPTIONS } from './stealth.config'
 
+/**
+ * Page-level pool: launches N browsers but tracks PAGES (not browsers) as
+ * the unit of concurrency. A single browser hosts many pages cheaply, so
+ * 4 browsers × 5 pages = 20 concurrent scrapes with the memory of 4 browsers.
+ *
+ * Compare with the old impl which acquired a whole browser per scrape and
+ * crashed silently on timeout via uncaught throw.
+ */
 @Injectable()
 export class BrowserPool implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BrowserPool.name)
-  private pool: Browser[] = []
-  private inUse: Set<Browser> = new Set()
-  private maxPoolSize: number = 5
-  private readonly waitTimeout: number = 30000
+  private browsers: Browser[] = []
+  private currentPages = 0
+  private waiters: Array<() => void> = []
+  private maxPages = 20
+  private waitTimeoutMs = 30_000
+  private rrIndex = 0
 
-  constructor(private configService: ConfigService) {
-    this.maxPoolSize = this.configService.get('PUPPETEER_MAX_POOL_SIZE', 5)
+  constructor(private readonly config: ConfigService) {
+    this.maxPages = Number(this.config.get('PUPPETEER_MAX_POOL_SIZE', 20))
   }
 
   async onModuleInit(): Promise<void> {
-    await this.initializePool()
+    const pagesPerBrowser = Number(this.config.get('PUPPETEER_PAGES_PER_BROWSER', 5))
+    const browsersNeeded = Math.max(1, Math.ceil(this.maxPages / pagesPerBrowser))
+    const browserlessEndpoint = this.config.get<string>('BROWSERLESS_WS_ENDPOINT')
+
+    for (let i = 0; i < browsersNeeded; i++) {
+      let browser: Browser
+      if (browserlessEndpoint) {
+        browser = await puppeteer.connect({ browserWSEndpoint: browserlessEndpoint })
+      } else {
+        const stealth = configureStealth()
+        browser = await stealth.launch(BROWSER_LAUNCH_OPTIONS)
+      }
+      this.browsers.push(browser)
+    }
+
+    this.logger.log(
+      `Browser pool ready — ${browsersNeeded} browsers, max ${this.maxPages} concurrent pages` +
+        (browserlessEndpoint ? ` (browserless @ ${browserlessEndpoint})` : ' (local)'),
+    )
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.closePool()
+    for (const b of this.browsers) {
+      try {
+        await b.close()
+      } catch {
+        // ignore
+      }
+    }
+    this.browsers = []
   }
 
   /**
-   * Inicializa el pool de browsers
+   * Acquire a fresh page. Blocks (with timeout) when at max concurrency.
+   * Caller MUST call releasePage(page) when done.
    */
-  private async initializePool(): Promise<void> {
-    const browserlessEndpoint = this.configService.get<string>('BROWSERLESS_WS_ENDPOINT')
-    const isUsingBrowserless = !!browserlessEndpoint
+  async acquirePage(blockResources = true): Promise<Page> {
+    if (this.currentPages >= this.maxPages) {
+      await this.waitForSlot()
+    }
+    this.currentPages++
 
     try {
-      if (isUsingBrowserless) {
-        this.logger.log(`Connecting to Browserless service at ${browserlessEndpoint}`)
-        // Conexión a browserless para Docker
-        for (let i = 0; i < this.maxPoolSize; i++) {
-          const browser = await puppeteer.connect({
-            browserWSEndpoint: browserlessEndpoint,
-          })
-          this.pool.push(browser)
-        }
-        this.logger.log(`Browser pool initialized with ${this.maxPoolSize} Browserless instances`)
-      } else {
-        this.logger.log(`Launching local Puppeteer browsers (BROWSERLESS_WS_ENDPOINT not set)`)
-        // Lanzamiento local para desarrollo
-        const stealthPuppeteer = configureStealth()
-        for (let i = 0; i < this.maxPoolSize; i++) {
-          const browser = await stealthPuppeteer.launch(BROWSER_LAUNCH_OPTIONS)
-          this.pool.push(browser)
-        }
-        this.logger.log(`Browser pool initialized with ${this.maxPoolSize} local instances`)
+      const browser = this.browsers[this.rrIndex % this.browsers.length]
+      this.rrIndex = (this.rrIndex + 1) % Math.max(1, this.browsers.length)
+
+      const page = await browser.newPage()
+
+      if (blockResources) {
+        await page.setRequestInterception(true)
+        page.on('request', (req) => {
+          const type = req.resourceType()
+          if (type === 'image' || type === 'font' || type === 'stylesheet' || type === 'media') {
+            req.abort().catch(() => {})
+          } else {
+            req.continue().catch(() => {})
+          }
+        })
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      this.logger.error(`Failed to initialize browser pool: ${errorMessage}`)
-      throw error
+
+      return page
+    } catch (err) {
+      this.currentPages--
+      this.releaseSlot()
+      throw err
     }
   }
 
-  /**
-   * Obtiene un browser del pool
-   */
-  async acquireBrowser(): Promise<Browser> {
-    // Si hay browsers disponibles, retorna uno
-    if (this.pool.length > 0) {
-      const browser = this.pool.pop()!
-      this.inUse.add(browser)
-      return browser
+  async releasePage(page: Page): Promise<void> {
+    try {
+      await page.close()
+    } catch (err) {
+      this.logger.warn(`Error closing page: ${(err as Error).message}`)
+    } finally {
+      this.currentPages--
+      this.releaseSlot()
     }
+  }
 
-    // Si todos están en uso, espera a que uno se libere
-    this.logger.warn(`All browsers in use, waiting for available browser...`)
-    return new Promise((resolve) => {
-      const checkInterval = setInterval(() => {
-        if (this.pool.length > 0) {
-          clearInterval(checkInterval)
-          const browser = this.pool.pop()!
-          this.inUse.add(browser)
-          resolve(browser)
-        }
-      }, 100)
-
-      setTimeout(() => {
-        clearInterval(checkInterval)
-        throw new Error('Browser acquisition timeout')
-      }, this.waitTimeout)
+  private waitForSlot(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const waiter = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+      const timer = setTimeout(() => {
+        const idx = this.waiters.indexOf(waiter)
+        if (idx >= 0) this.waiters.splice(idx, 1)
+        reject(new Error(`Browser page acquisition timeout after ${this.waitTimeoutMs}ms`))
+      }, this.waitTimeoutMs)
+      this.waiters.push(waiter)
     })
   }
 
-  /**
-   * Devuelve un browser al pool
-   */
-  releaseBrowser(browser: Browser): void {
-    this.inUse.delete(browser)
-    this.pool.push(browser)
+  private releaseSlot(): void {
+    const next = this.waiters.shift()
+    if (next) next()
   }
 
-  /**
-   * Cierra el pool completamente
-   */
-  private async closePool(): Promise<void> {
-    for (const browser of this.pool) {
-      try {
-        await browser.close()
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error)
-        this.logger.error(`Error closing browser: ${errorMessage}`)
-      }
-    }
-
-    for (const browser of this.inUse) {
-      try {
-        await browser.close()
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error)
-        this.logger.error(`Error closing browser in use: ${errorMessage}`)
-      }
-    }
-
-    this.pool = []
-    this.inUse.clear()
-    this.logger.log('Browser pool closed')
-  }
-
-  /**
-   * Obtiene estadísticas del pool
-   */
-  getPoolStats(): { available: number; inUse: number; total: number } {
+  getStats() {
     return {
-      available: this.pool.length,
-      inUse: this.inUse.size,
-      total: this.pool.length + this.inUse.size,
+      browsers: this.browsers.length,
+      maxPages: this.maxPages,
+      currentPages: this.currentPages,
+      waiting: this.waiters.length,
     }
   }
 }

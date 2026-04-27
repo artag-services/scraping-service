@@ -1,0 +1,36 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("SCRAPING_DATABASE_URL")
+}
+
+enum ScrapingStatus {
+  QUEUED
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+model ScrapingJob {
+  id          String         @id @default(uuid())
+  userId      String?
+  url         String
+  strategy    String
+  request     Json                            // full DTO with password redacted
+  status      ScrapingStatus @default(QUEUED)
+  result      Json?
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  durationMs  Int?
+  expiresAt   DateTime                        // auto-delete after this
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([status, expiresAt])
+  @@index([userId, createdAt])
+}
