@@ -6,6 +6,7 @@ import { RedisModule } from './redis/redis.module'
 import { RabbitMQModule } from './rabbitmq/rabbitmq.module'
 import { QueueModule } from './queue/queue.module'
 import { RateLimiter } from './rate-limit/rate-limiter'
+import { AdminModule } from './admin/admin.module'
 
 @Module({
   imports: [
@@ -18,6 +19,9 @@ import { RateLimiter } from './rate-limit/rate-limiter'
 
     // Pipeline
     QueueModule,
+
+    // Admin
+    AdminModule,
   ],
   providers: [RateLimiter],
 })
