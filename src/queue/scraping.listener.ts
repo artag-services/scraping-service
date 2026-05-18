@@ -61,6 +61,14 @@ export class ScrapingListener implements OnModuleInit {
         url: request.url,
         userId: request.userId,
       })
+      // CQRS: announce job creation. Sync-service projects this so the read
+      // model has a row even before the scrape completes.
+      this.publishEvent('data.scraping.task.created', this.cqrsPayload({
+        jobId,
+        userId: request.userId,
+        url: request.url,
+        status: 'queued',
+      }))
 
       // 2) Mark RUNNING + emit
       await this.jobs.markStarted(jobId)
@@ -69,6 +77,13 @@ export class ScrapingListener implements OnModuleInit {
         url: request.url,
         userId: request.userId,
       })
+      this.publishEvent('data.scraping.task.started', this.cqrsPayload({
+        jobId,
+        userId: request.userId,
+        url: request.url,
+        status: 'started',
+        startedAt: new Date().toISOString(),
+      }))
 
       // 3) Run scraper
       const result = await this.scraper.run(taskMessage)
@@ -77,10 +92,12 @@ export class ScrapingListener implements OnModuleInit {
       if (result.success) {
         await this.jobs.markCompleted(jobId, result)
         this.publishEvent(ROUTING_KEYS.EVENT_COMPLETED, this.eventPayload(result))
+        this.publishEvent('data.scraping.task.completed', this.cqrsPayloadFromResult(result))
         this.dispatchOutputs(taskMessage, result)
       } else {
         await this.jobs.markFailed(jobId, result)
         this.publishEvent(ROUTING_KEYS.EVENT_FAILED, this.eventPayload(result))
+        this.publishEvent('data.scraping.task.failed', this.cqrsPayloadFromResult(result))
       }
     } catch (err) {
       const message = (err as Error).message
@@ -92,6 +109,16 @@ export class ScrapingListener implements OnModuleInit {
         success: false,
         error: message,
       })
+      // CQRS: announce the failure so the read model reflects it even when
+      // the pipeline itself threw (vs. result.success === false).
+      this.publishEvent('data.scraping.task.failed', this.cqrsPayload({
+        jobId,
+        userId: request.userId,
+        url: request.url,
+        status: 'failed',
+        error: message,
+        timestamp: new Date().toISOString(),
+      }))
       throw err
     }
   }
@@ -160,6 +187,64 @@ export class ScrapingListener implements OnModuleInit {
       completedAt: result.completedAt,
       durationMs: result.durationMs,
     }
+  }
+
+  /**
+   * Build the canonical CQRS payload shape consumed by sync-service.
+   *
+   * Sync's `ScrapingProjector` keys collections on `taskId`, not the local
+   * `jobId`, and looks for top-level `title`, `status`, `timestamp` fields
+   * (vs the legacy nested `data.title` + `success: boolean` + `completedAt`).
+   * This helper does the mapping in one place so producers don't have to
+   * remember.
+   *
+   * Caller supplies the bits it actually knows; sensible defaults fill in
+   * the rest.
+   */
+  private cqrsPayload(args: {
+    jobId: string
+    userId?: string | null
+    url: string
+    status?: 'queued' | 'started' | 'completed' | 'failed'
+    title?: string | null
+    startedAt?: string | null
+    timestamp?: string | null
+    durationMs?: number | null
+    error?: string | null
+    notionPageUrl?: string | null
+  }): Record<string, unknown> {
+    return {
+      // sync expects `taskId`; we keep `jobId` as alias for legacy consumers.
+      taskId: args.jobId,
+      jobId: args.jobId,
+      userId: args.userId ?? null,
+      url: args.url,
+      title: args.title ?? null,
+      status: args.status ?? 'completed',
+      startedAt: args.startedAt ?? null,
+      timestamp: args.timestamp ?? new Date().toISOString(),
+      durationMs: args.durationMs ?? null,
+      error: args.error ?? null,
+      notionPageUrl: args.notionPageUrl ?? null,
+    }
+  }
+
+  /** Convenience wrapper that extracts the right bits from a ScrapingResult. */
+  private cqrsPayloadFromResult(result: ScrapingResult): Record<string, unknown> {
+    const data = (result.data ?? {}) as { title?: string }
+    return this.cqrsPayload({
+      jobId: result.jobId,
+      userId: result.userId,
+      url: result.url,
+      status: result.success ? 'completed' : 'failed',
+      title: data.title ?? null,
+      startedAt: result.startedAt ? new Date(result.startedAt).toISOString() : null,
+      timestamp: result.completedAt
+        ? new Date(result.completedAt).toISOString()
+        : new Date().toISOString(),
+      durationMs: result.durationMs ?? null,
+      error: result.error ?? null,
+    })
   }
 
   private publishEvent(routingKey: string, payload: Record<string, unknown>): void {
