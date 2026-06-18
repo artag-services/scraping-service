@@ -26,7 +26,9 @@ async function bootstrap() {
 
     logger.log(`Starting Scraping Service on port ${port} (${nodeEnv})`);
 
-    // BrowserPool is already initialized by NestJS via OnModuleInit
+    // Trigger OnModuleInit lifecycle hooks (RabbitMQ, consumers, BrowserPool)
+    await app.init();
+
     const browserPool = app.get(BrowserPool);
     logger.log(`Browser Pool ready: ${JSON.stringify(browserPool.getStats())}`);
 
