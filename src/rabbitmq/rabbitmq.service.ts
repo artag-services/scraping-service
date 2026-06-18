@@ -2,6 +2,12 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config'
 import * as amqp from 'amqplib'
 
+interface SubscriptionEntry {
+  queue: string
+  routingKey: string
+  handler: (payload: Record<string, any>) => Promise<void>
+}
+
 @Injectable()
 export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RabbitMQService.name)
@@ -12,6 +18,8 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
   private connecting = false
   private connectPromise: Promise<void> | null = null
   private consumerTags: string[] = []
+  private subscriptions: SubscriptionEntry[] = []
+  private reconnecting = false
 
   private rabbitmqUrl: string
   private exchange: string
@@ -65,13 +73,16 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
       });
 
       this.connection.on('close', () => {
-        this.logger.warn('RabbitMQ connection closed — attempting to reconnect...')
+        if (this.reconnecting) return
+        this.reconnecting = true
+        this.logger.warn('RabbitMQ connection closed — reconnecting...')
         this.channel = null
         this.connection = null
         this.consumerTags = []
-        this.connect().catch((e) =>
-          this.logger.error(`Reconnection failed: ${e.message}`),
-        )
+        this.connect()
+          .then(() => this._replaySubscriptions())
+          .catch((e) => this.logger.error(`Reconnection failed: ${e.message}`))
+          .finally(() => { this.reconnecting = false })
       });
 
       this.channel = await this.connection.createChannel()
@@ -95,6 +106,40 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
         const errorMessage = error instanceof Error ? error.message : String(error)
         this.logger.error(`Failed to connect to RabbitMQ after ${this.retryAttempts} attempts: ${errorMessage}`)
         throw error
+      }
+    }
+  }
+
+  private async _replaySubscriptions(): Promise<void> {
+    if (!this.channel) return
+    for (const sub of this.subscriptions) {
+      try {
+        await this.channel.assertQueue(sub.queue, { durable: true })
+        await this.channel.bindQueue(sub.queue, this.exchange, sub.routingKey)
+        await this.channel.prefetch(1)
+        const result = await this.channel.consume(
+          sub.queue,
+          async (message) => {
+            if (message) {
+              try {
+                const payload = JSON.parse((message as any).content.toString())
+                this.logger.debug(`Received message from ${sub.queue}`)
+                await sub.handler(payload)
+                this.channel?.ack(message)
+              } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error)
+                this.logger.error(`Error processing message from [${sub.queue}]: ${errorMessage}`)
+                this.channel?.nack(message, false, false)
+              }
+            }
+          },
+          { noAck: false },
+        )
+        this.consumerTags.push(result.consumerTag)
+        this.logger.log(`Resubscribed to ${sub.queue} | routing key: ${sub.routingKey}`)
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        this.logger.error(`Failed to resubscribe to ${sub.queue}: ${errorMessage}`)
       }
     }
   }
@@ -169,6 +214,7 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
       )
       const consumerTag = result.consumerTag
 
+      this.subscriptions.push({ queue, routingKey, handler })
       this.consumerTags.push(consumerTag)
       this.logger.log(`Subscribed to ${queue} | routing key: ${routingKey}`)
     } catch (error) {

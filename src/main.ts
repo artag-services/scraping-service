@@ -13,6 +13,10 @@ process.on('uncaughtException', (error) => {
   logger.error(`Uncaught Exception: ${error.message}`);
 });
 
+process.on('exit', (code) => {
+  logger.log(`Process exiting with code ${code}`);
+});
+
 async function bootstrap() {
   try {
     const app = await NestFactory.create(AppModule);
@@ -22,15 +26,17 @@ async function bootstrap() {
 
     logger.log(`Starting Scraping Service on port ${port} (${nodeEnv})`);
 
+    // BrowserPool is already initialized by NestJS via OnModuleInit
     const browserPool = app.get(BrowserPool);
-    logger.log('Initializing Browser Pool...');
-    await browserPool.onModuleInit();
-    logger.log('Browser Pool initialized successfully');
+    logger.log(`Browser Pool ready: ${JSON.stringify(browserPool.getStats())}`);
 
     if (process.env.ENABLE_HTTP_SERVER === 'true') {
       await app.listen(Number(port));
       logger.log(`HTTP server listening on port ${port}`);
     }
+
+    // Keep process alive even if all external connections drop
+    setInterval(() => {}, 24 * 60 * 60 * 1000);
 
     logger.log('Scraping Service is ready');
   } catch (error) {
@@ -40,4 +46,7 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+bootstrap().catch((error) => {
+  const msg = error instanceof Error ? error.message : String(error);
+  logger.error(`Bootstrap crashed: ${msg}`);
+});
