@@ -10,7 +10,6 @@ export class PuppeteerAutoScraper implements IAutoScraper {
 
   async autoScrape(browser: IBrowserAutomation): Promise<AutoScrapedContent> {
     const puppeteer = browser as PuppeteerBrowserAutomation;
-    const page = (puppeteer as any)['page'];
-    return this.autoScraper.autoScrape(page);
+    return this.autoScraper.autoScrape(puppeteer.getPage());
   }
 }

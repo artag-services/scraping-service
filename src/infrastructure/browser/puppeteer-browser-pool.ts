@@ -15,8 +15,8 @@ export class PuppeteerBrowserPool implements IBrowserPool {
     private readonly config: ConfigService,
   ) {}
 
-  async acquire(blockResources = true): Promise<IBrowserAutomation> {
-    const page = await this.browserPool.acquirePage(blockResources);
+  async acquire(): Promise<IBrowserAutomation> {
+    const page = await this.browserPool.acquirePage();
     await page.setUserAgent(getRandomUserAgent());
     await page.setExtraHTTPHeaders({
       'Accept-Language': 'es-ES,es;q=0.9',
@@ -27,10 +27,7 @@ export class PuppeteerBrowserPool implements IBrowserPool {
 
   async release(browser: IBrowserAutomation): Promise<void> {
     const puppeteerBrowser = browser as PuppeteerBrowserAutomation;
-    const page = (puppeteerBrowser as any)['page'];
-    if (page) {
-      await this.browserPool.releasePage(page).catch(() => {});
-    }
+    await this.browserPool.releasePage(puppeteerBrowser.getPage()).catch(() => {});
   }
 
   getStats(): { browsers: number; maxPages: number; currentPages: number; waiting: number } {

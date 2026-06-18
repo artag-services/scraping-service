@@ -17,8 +17,12 @@ export class ScrapingTaskConsumer implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.rabbitmq.subscribe(QUEUES.TASK, ROUTING_KEYS.TASK, (p) => this.handleTask(p));
-    this.logger.log('ScrapingTaskConsumer ready — listening on task queue');
+    try {
+      await this.rabbitmq.subscribe(QUEUES.TASK, ROUTING_KEYS.TASK, (p) => this.handleTask(p));
+      this.logger.log('ScrapingTaskConsumer ready — listening on task queue');
+    } catch (err) {
+      this.logger.error(`Failed to subscribe to task queue: ${(err as Error).message}`);
+    }
   }
 
   private async handleTask(payload: Record<string, unknown>): Promise<void> {
@@ -46,7 +50,6 @@ export class ScrapingTaskConsumer implements OnModuleInit {
       this.logger.error(`Pipeline error for job ${jobId}: ${message}`);
       await this.publishEvent(ROUTING_KEYS.EVENT_FAILED, { jobId, url: task.url, userId: task.userId, success: false, error: message });
       await this.publishEvent('data.scraping.task.failed', { taskId: jobId, jobId, userId: task.userId, url: task.url, status: 'failed', error: message, timestamp: new Date().toISOString() });
-      throw err;
     }
   }
 

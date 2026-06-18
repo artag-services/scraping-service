@@ -62,7 +62,7 @@ export class BrowserPool implements OnModuleInit, OnModuleDestroy {
    * Acquire a fresh page. Blocks (with timeout) when at max concurrency.
    * Caller MUST call releasePage(page) when done.
    */
-  async acquirePage(blockResources = true): Promise<Page> {
+  async acquirePage(): Promise<Page> {
     if (this.currentPages >= this.maxPages) {
       await this.waitForSlot()
     }
@@ -72,21 +72,7 @@ export class BrowserPool implements OnModuleInit, OnModuleDestroy {
       const browser = this.browsers[this.rrIndex % this.browsers.length]
       this.rrIndex = (this.rrIndex + 1) % Math.max(1, this.browsers.length)
 
-      const page = await browser.newPage()
-
-      if (blockResources) {
-        await page.setRequestInterception(true)
-        page.on('request', (req) => {
-          const type = req.resourceType()
-          if (type === 'image' || type === 'font' || type === 'stylesheet' || type === 'media') {
-            req.abort().catch(() => {})
-          } else {
-            req.continue().catch(() => {})
-          }
-        })
-      }
-
-      return page
+      return await browser.newPage()
     } catch (err) {
       this.currentPages--
       this.releaseSlot()

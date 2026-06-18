@@ -2,7 +2,15 @@ import { Page } from 'puppeteer';
 import { IBrowserAutomation, BrowserCookie } from '../../domain/ports/IBrowserAutomation';
 
 export class PuppeteerBrowserAutomation implements IBrowserAutomation {
-  constructor(private readonly page: Page) {}
+  private readonly page: Page;
+
+  constructor(page: Page) {
+    this.page = page;
+  }
+
+  getPage(): Page {
+    return this.page;
+  }
 
   async navigate(url: string, timeout?: number): Promise<void> {
     await this.page.goto(url, { waitUntil: 'networkidle2', timeout });

@@ -33,10 +33,9 @@ export class ExecuteScrapingUseCase {
     await this.publishEvent(`data.scraping.task.started`, task as unknown as Record<string, unknown>);
 
     const startedAt = new Date();
-    const blockResources = task.performance?.blockResources !== false;
     const timeout = task.performance?.timeoutMs ?? this.defaultTimeout;
 
-    let browser = await this.browserPool.acquire(blockResources);
+    let browser = await this.browserPool.acquire();
     try {
       const orchestrator = new ScrapingOrchestrator(browser, timeout, this.sessionManager, this.autoScraper);
       const data = await orchestrator.execute(task);

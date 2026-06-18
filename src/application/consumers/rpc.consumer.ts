@@ -18,10 +18,19 @@ export class RpcConsumer implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.rabbitmq.subscribe(QUEUES.LIST, ROUTING_KEYS.LIST, (p) => this.handleRpc(p, 'list'));
-    await this.rabbitmq.subscribe(QUEUES.GET, ROUTING_KEYS.GET, (p) => this.handleRpc(p, 'get'));
-    await this.rabbitmq.subscribe(QUEUES.DELETE, ROUTING_KEYS.DELETE, (p) => this.handleRpc(p, 'delete'));
-    await this.rabbitmq.subscribe(QUEUES.CLEANUP_EXPIRED, ROUTING_KEYS.CLEANUP_EXPIRED, (p) => this.handleRpc(p, 'cleanup'));
+    const subscriptions = [
+      { queue: QUEUES.LIST, key: ROUTING_KEYS.LIST, op: 'list' },
+      { queue: QUEUES.GET, key: ROUTING_KEYS.GET, op: 'get' },
+      { queue: QUEUES.DELETE, key: ROUTING_KEYS.DELETE, op: 'delete' },
+      { queue: QUEUES.CLEANUP_EXPIRED, key: ROUTING_KEYS.CLEANUP_EXPIRED, op: 'cleanup' },
+    ];
+    for (const sub of subscriptions) {
+      try {
+        await this.rabbitmq.subscribe(sub.queue, sub.key, (p) => this.handleRpc(p, sub.op));
+      } catch (err) {
+        this.logger.error(`Failed to subscribe to ${sub.queue}: ${(err as Error).message}`);
+      }
+    }
     this.logger.log('RpcConsumer ready — listening on list/get/delete/cleanup queues');
   }
 
@@ -64,10 +73,14 @@ export class RpcConsumer implements OnModuleInit {
   }
 
   private async respond(correlationId: string, success: boolean, data: unknown): Promise<void> {
-    await this.rabbitmq.publish(ROUTING_KEYS.RESPONSE, {
-      correlationId,
-      success,
-      ...(typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : { data }),
-    });
+    try {
+      await this.rabbitmq.publish(ROUTING_KEYS.RESPONSE, {
+        correlationId,
+        success,
+        ...(typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : { data }),
+      });
+    } catch (err) {
+      this.logger.error(`Failed to send RPC response: ${(err as Error).message}`);
+    }
   }
 }

@@ -5,6 +5,14 @@ import { BrowserPool } from './scraper/browser-pool';
 
 const logger = new Logger('Scraping Service');
 
+process.on('unhandledRejection', (reason) => {
+  logger.error(`Unhandled Rejection: ${reason instanceof Error ? reason.message : String(reason)}`);
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error(`Uncaught Exception: ${error.message}`);
+});
+
 async function bootstrap() {
   try {
     const app = await NestFactory.create(AppModule);
