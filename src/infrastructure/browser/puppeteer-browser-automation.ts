@@ -13,7 +13,7 @@ export class PuppeteerBrowserAutomation implements IBrowserAutomation {
   }
 
   async navigate(url: string, timeout?: number): Promise<void> {
-    await this.page.goto(url, { waitUntil: 'networkidle2', timeout });
+    await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout });
   }
 
   async waitForSelector(selector: string, timeout?: number): Promise<void> {
@@ -178,7 +178,7 @@ export class PuppeteerBrowserAutomation implements IBrowserAutomation {
   }
 
   async goto(url: string, timeout?: number): Promise<void> {
-    await this.page.goto(url, { waitUntil: 'networkidle2', timeout });
+    await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout });
   }
 
   async reload(timeout?: number): Promise<void> {
