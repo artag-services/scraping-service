@@ -20,31 +20,49 @@ export class BrowserPool implements OnModuleInit, OnModuleDestroy {
   private maxPages = 20
   private waitTimeoutMs = 30_000
   private rrIndex = 0
+  private initResolve!: () => void
+  private initReject!: (err: Error) => void
+  private isInitDone = false
+  private readonly initPromise: Promise<void>
 
   constructor(private readonly config: ConfigService) {
     this.maxPages = Number(this.config.get('PUPPETEER_MAX_POOL_SIZE', 20))
+    this.initPromise = new Promise((resolve, reject) => {
+      this.initResolve = resolve
+      this.initReject = reject
+    })
   }
 
   async onModuleInit(): Promise<void> {
-    const pagesPerBrowser = Number(this.config.get('PUPPETEER_PAGES_PER_BROWSER', 5))
-    const browsersNeeded = Math.max(1, Math.ceil(this.maxPages / pagesPerBrowser))
-    const browserlessEndpoint = this.config.get<string>('BROWSERLESS_WS_ENDPOINT')
+    try {
+      const pagesPerBrowser = Number(this.config.get('PUPPETEER_PAGES_PER_BROWSER', 5))
+      const browsersNeeded = Math.max(1, Math.ceil(this.maxPages / pagesPerBrowser))
+      const browserlessEndpoint = this.config.get<string>('BROWSERLESS_WS_ENDPOINT')
 
-    for (let i = 0; i < browsersNeeded; i++) {
-      let browser: Browser
-      if (browserlessEndpoint) {
-        browser = await puppeteer.connect({ browserWSEndpoint: browserlessEndpoint })
-      } else {
-        const stealth = configureStealth()
-        browser = await stealth.launch(BROWSER_LAUNCH_OPTIONS)
+      for (let i = 0; i < browsersNeeded; i++) {
+        let browser: Browser
+        if (browserlessEndpoint) {
+          browser = await puppeteer.connect({ browserWSEndpoint: browserlessEndpoint })
+        } else {
+          const stealth = configureStealth()
+          browser = await stealth.launch(BROWSER_LAUNCH_OPTIONS)
+        }
+        this.browsers.push(browser)
       }
-      this.browsers.push(browser)
-    }
 
-    this.logger.log(
-      `Browser pool ready — ${browsersNeeded} browsers, max ${this.maxPages} concurrent pages` +
-        (browserlessEndpoint ? ` (browserless @ ${browserlessEndpoint})` : ' (local)'),
-    )
+      this.isInitDone = true
+      this.initResolve()
+
+      this.logger.log(
+        `Browser pool ready — ${browsersNeeded} browsers, max ${this.maxPages} concurrent pages` +
+          (browserlessEndpoint ? ` (browserless @ ${browserlessEndpoint})` : ' (local)'),
+      )
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error))
+      this.logger.error(`Browser pool initialization failed: ${err.message}`)
+      this.initReject(err)
+      throw err
+    }
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -60,9 +78,17 @@ export class BrowserPool implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Acquire a fresh page. Blocks (with timeout) when at max concurrency.
+   * Waits for browser pool initialization to complete first.
    * Caller MUST call releasePage(page) when done.
    */
   async acquirePage(): Promise<Page> {
+    if (!this.isInitDone) {
+      await this.initPromise
+    }
+    if (!this.browsers.length) {
+      throw new Error('Browser pool has no browsers available')
+    }
+
     if (this.currentPages >= this.maxPages) {
       await this.waitForSlot()
     }
