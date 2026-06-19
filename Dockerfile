@@ -22,11 +22,11 @@ RUN apk add --no-cache openssl
 
 RUN npm install -g pnpm@10.18.0
 
-COPY package.json pnpm-lock.yaml* ./
+COPY scrapping/package.json scrapping/pnpm-lock.yaml* ./
 
 RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
 
-COPY . .
+COPY scrapping/ .
 
 RUN pnpm prisma:generate
 RUN pnpm run build
@@ -46,9 +46,9 @@ RUN apk add --no-cache \
 
 RUN npm install -g pnpm@10.18.0
 
-COPY entrypoint.sh ./
-COPY package.json pnpm-lock.yaml* ./
-COPY prisma ./prisma
+COPY scrapping/entrypoint.sh ./
+COPY scrapping/package.json scrapping/pnpm-lock.yaml* ./
+COPY scrapping/prisma ./prisma
 
 RUN pnpm install $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
 
