@@ -34,8 +34,9 @@ export class PrismaJobRepository implements IJobRepository {
   async createQueued(request: ScrapingTaskRequest & { jobId?: string }): Promise<ScrapingJobRecord> {
     const expiresAfterMs = request.lifecycle?.expiresAfterMs ?? DEFAULT_EXPIRES_AFTER_MS;
     const now = new Date();
-    const record = await this.prisma.scrapingJob.create({
-      data: {
+    const record = await this.prisma.scrapingJob.upsert({
+      where: { id: request.jobId ?? '' },
+      create: {
         id: request.jobId ?? undefined,
         userId: request.userId ?? null,
         url: request.url,
@@ -47,6 +48,13 @@ export class PrismaJobRepository implements IJobRepository {
         startedAt: null,
         completedAt: null,
         durationMs: null,
+        expiresAt: new Date(now.getTime() + expiresAfterMs),
+      },
+      update: {
+        status: ScrapingStatus.QUEUED,
+        url: request.url,
+        strategy: request.strategy,
+        request: this.redactCredentials(request as unknown as Record<string, unknown>) as any,
         expiresAt: new Date(now.getTime() + expiresAfterMs),
       },
     });
