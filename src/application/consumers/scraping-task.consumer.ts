@@ -32,9 +32,15 @@ export class ScrapingTaskConsumer implements OnModuleInit {
     const task = new ScrapingTaskMessage(
       jobId,
       request.url as string,
-      request.userId as string | undefined,
+      (request.userId as string) ?? undefined,
       (request.strategy as any) ?? 'auto',
-      undefined, undefined, undefined, undefined, undefined, undefined,
+      request.selectors as any,
+      request.search as any,
+      request.login as any,
+      request.flow as any,
+      request.output as any,
+      request.performance as any,
+      request.lifecycle as any,
     );
 
     this.logger.log(`Task ${jobId} → ${task.url} [${task.strategy}]`);
