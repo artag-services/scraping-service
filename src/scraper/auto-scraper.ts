@@ -3,6 +3,7 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { Page } from 'puppeteer'
+import { Timed } from '../utils/timing'
 
 export interface AutoScrapedContent {
   title: string
@@ -28,9 +29,7 @@ export class AutoScraper {
     )
   }
 
-  /**
-   * Automatically extracts content from a page
-   */
+  @Timed()
   async autoScrape(page: Page): Promise<AutoScrapedContent> {
     this.logger.log('🤖 Starting auto-scraping...')
 

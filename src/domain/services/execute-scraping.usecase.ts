@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ScrapingTaskMessage } from '../value-objects/scraping-task';
 import { ScrapingResult } from '../value-objects/scraping-result';
 import { ScrapingOrchestrator } from './scraping-orchestrator';
@@ -10,8 +11,11 @@ import { ISessionManager } from '../ports/ISessionManager';
 import { IAutoScraper } from '../ports/IAutoScraper';
 import { INotificationAdapter } from '../ports/INotificationAdapter';
 import { NotificationAdapterRegistry } from './notification-adapter.registry';
+import { Timed } from '../../utils/timing';
 
 export class ExecuteScrapingUseCase {
+  private readonly logger = new Logger(ExecuteScrapingUseCase.name);
+
   constructor(
     private readonly browserPool: IBrowserPool,
     private readonly jobRepo: IJobRepository,
@@ -24,6 +28,7 @@ export class ExecuteScrapingUseCase {
     private readonly autoScraper?: IAutoScraper,
   ) {}
 
+  @Timed()
   async execute(task: ScrapingTaskMessage): Promise<void> {
     const cacheKey = this.cacheKey(task);
     const cached = await this.readCache(cacheKey, task);
@@ -119,16 +124,21 @@ export class ExecuteScrapingUseCase {
   private async sendNotifications(task: ScrapingTaskMessage, result: ScrapingResult): Promise<void> {
     if (!result.success) return;
     const targets = task.output?.targets ?? [];
+    this.logger.log(`sendNotifications: targets=[${targets.join(',')}] userId=${task.userId}`);
     for (const target of targets) {
       if (target === 'event') continue;
       try {
         const adapter = this.notificationRegistry.get(target);
         if (adapter) {
+          this.logger.log(`sendNotifications: adapter=${target} found, sending...`);
           const message = `Scraping completed for ${task.url}`;
           await adapter.send(task.userId ?? 'unknown', message, { jobId: task.jobId, url: task.url, data: result.data });
+          this.logger.log(`sendNotifications: adapter=${target} done`);
+        } else {
+          this.logger.warn(`sendNotifications: adapter=${target} NOT FOUND in registry`);
         }
-      } catch {
-        // notification failure should not fail the job
+      } catch (err) {
+        this.logger.error(`sendNotifications: adapter=${target} FAILED: ${(err as Error).message}`);
       }
     }
   }

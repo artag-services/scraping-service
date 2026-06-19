@@ -7,6 +7,7 @@ import { LoginConfig } from '../value-objects/login-config';
 import { SearchConfig } from '../value-objects/search-config';
 import { SelectorValue, SelectorMap } from '../value-objects/selector';
 import { FlowStep } from '../value-objects/flow-step';
+import { Timed } from '../../utils/timing';
 
 export class ScrapingOrchestrator {
   constructor(
@@ -16,6 +17,7 @@ export class ScrapingOrchestrator {
     private readonly autoScraper?: IAutoScraper,
   ) {}
 
+  @Timed()
   async execute(task: ScrapingTaskMessage): Promise<Record<string, unknown>> {
     switch (task.strategy) {
       case 'auto': {

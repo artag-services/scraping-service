@@ -15,6 +15,16 @@ export class NotionNotificationAdapter implements INotificationAdapter {
 
   async send(userId: string, message: string, metadata?: Record<string, unknown>): Promise<void> {
     const parentPageId = this.config.get<string>('NOTION_PARENT_PAGE_ID');
+    const scrapedData = metadata?.data as Record<string, unknown> | undefined;
+    this.logger.log(
+      `NotionAdapter.send: userId=${userId} messageId=${metadata?.jobId} ` +
+      `parentPageId=${parentPageId} ` +
+      `hasScrapedData=${!!scrapedData} ` +
+      `title=${scrapedData?.title ?? '(none)'} ` +
+      `sections=${(scrapedData?.sections as any)?.length ?? 0} ` +
+      `links=${(scrapedData?.links as any)?.length ?? 0} ` +
+      `textLen=${(scrapedData?.text as string)?.length ?? 0}`,
+    );
     await this.rabbitmq.publish('channels.notion.send', {
       messageId: metadata?.jobId ?? `notify-${Date.now()}`,
       operation: 'create_page',
@@ -28,6 +38,6 @@ export class NotionNotificationAdapter implements INotificationAdapter {
         scrapedData: metadata?.data,
       },
     });
-    this.logger.log(`Notion notification sent for user ${userId}`);
+    this.logger.log(`NotionAdapter.send: published OK for messageId=${metadata?.jobId}`);
   }
 }

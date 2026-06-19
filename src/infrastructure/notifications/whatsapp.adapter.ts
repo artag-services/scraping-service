@@ -18,6 +18,7 @@ export class WhatsAppNotificationAdapter implements INotificationAdapter {
 
   async send(userId: string, message: string, metadata?: Record<string, unknown>): Promise<void> {
     const to = (metadata?.to as string) || (userId && userId !== 'unknown' ? userId : undefined) || this.defaultTo;
+    this.logger.log(`WhatsAppAdapter.send: userId=${userId} resolvedTo=${to} hasData=${!!metadata?.data}`);
     if (!to) {
       this.logger.warn('No recipient for WhatsApp notification — skipping');
       return;
@@ -27,6 +28,6 @@ export class WhatsAppNotificationAdapter implements INotificationAdapter {
       recipients: [to],
       message,
     });
-    this.logger.log(`WhatsApp notification sent to ${to}`);
+    this.logger.log(`WhatsAppAdapter.send: published OK for messageId=${metadata?.jobId}`);
   }
 }
