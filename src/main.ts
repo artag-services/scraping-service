@@ -1,7 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
-import { BrowserPool } from './scraper/browser-pool';
 
 const logger = new Logger('Scraping Service');
 
@@ -26,11 +25,8 @@ async function bootstrap() {
 
     logger.log(`Starting Scraping Service on port ${port} (${nodeEnv})`);
 
-    // Trigger OnModuleInit lifecycle hooks (RabbitMQ, consumers, BrowserPool)
+    // Trigger OnModuleInit lifecycle hooks (RabbitMQ, consumers)
     await app.init();
-
-    const browserPool = app.get(BrowserPool);
-    logger.log(`Browser Pool ready: ${JSON.stringify(browserPool.getStats())}`);
 
     if (process.env.ENABLE_HTTP_SERVER === 'true') {
       await app.listen(Number(port));

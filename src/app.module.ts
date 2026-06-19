@@ -7,19 +7,17 @@ import { RabbitMQModule } from './rabbitmq/rabbitmq.module';
 import { AdminModule } from './admin/admin.module';
 
 // Infrastructure adapters
-import { PuppeteerBrowserPool } from './infrastructure/browser/puppeteer-browser-pool';
+import { RustScraperPool } from './infrastructure/browser/rust-scraper-pool';
 import { PrismaJobRepository } from './infrastructure/persistence/prisma-job.repository';
 import { RabbitMQEventPublisher } from './infrastructure/messaging/rabbitmq-event-publisher';
 import { RabbitMQOutputDispatcher } from './infrastructure/messaging/rabbitmq-output-dispatcher';
 import { RedisSessionManager } from './infrastructure/session/redis-session-manager';
-import { PuppeteerAutoScraper } from './infrastructure/scraper/puppeteer-auto-scraper';
 import { RedisCacheService } from './infrastructure/cache/redis-cache.service';
 import { NotionNotificationAdapter } from './infrastructure/notifications/notion.adapter';
 import { WhatsAppNotificationAdapter } from './infrastructure/notifications/whatsapp.adapter';
 import { EmailNotificationAdapter } from './infrastructure/notifications/email.adapter';
 
-// Existing infra (kept as underlying impl)
-import { BrowserPool } from './scraper/browser-pool';
+// Scraper
 import { AutoScraper } from './scraper/auto-scraper';
 
 // Domain services
@@ -51,17 +49,15 @@ import { NotionResponseConsumer } from './application/consumers/notion-response.
     AdminModule,
   ],
   providers: [
-    // Existing infra (kept as underlying implementations)
-    BrowserPool,
     AutoScraper,
 
     // ── Port → Adapter bindings ──
-    { provide: 'IBrowserPool', useClass: PuppeteerBrowserPool },
+    { provide: 'IBrowserPool', useClass: RustScraperPool },
     { provide: 'IJobRepository', useClass: PrismaJobRepository },
     { provide: 'IEventPublisher', useClass: RabbitMQEventPublisher },
     { provide: 'IOutputDispatcher', useClass: RabbitMQOutputDispatcher },
     { provide: 'ISessionManager', useClass: RedisSessionManager },
-    { provide: 'IAutoScraper', useClass: PuppeteerAutoScraper },
+    { provide: 'IAutoScraper', useClass: AutoScraper },
     { provide: 'ICacheService', useClass: RedisCacheService },
 
     // Notification adapters (registered with their own token + multi: true)
@@ -110,7 +106,7 @@ import { NotionResponseConsumer } from './application/consumers/notion-response.
           outputDispatcher,
           cacheService,
           registry,
-          Number(config.get('PUPPETEER_TIMEOUT', 60_000)),
+          Number(config.get('SCRAPING_TIMEOUT', 60_000)),
           sessionManager,
           autoScraper,
         ),

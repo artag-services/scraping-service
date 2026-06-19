@@ -47,6 +47,15 @@ if [ -f "prisma/schema.prisma" ]; then
   fi
 fi
 
+# STEP 5: Start Rust scraper sidecar
+echo -e "\n${YELLOW}[STEP 5/5]${NC} Starting Rust scraper sidecar..."
+RUST_SCRAPER_PORT="${RUST_SCRAPER_PORT:-3009}"
+scraper-rs &
+RUST_PID=$!
+echo -e "${GREEN}✅ Rust scraper started on port $RUST_SCRAPER_PORT (PID: $RUST_PID)${NC}"
+
+trap "kill $RUST_PID 2>/dev/null" EXIT
+
 echo -e "\n${BLUE}═══════════════════════════════════════════════════════${NC}"
 echo -e "${GREEN}🚀 Starting $SERVICE_NAME service...${NC}"
 echo -e "${BLUE}═══════════════════════════════════════════════════════${NC}\n"

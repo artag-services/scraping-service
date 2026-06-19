@@ -1,6 +1,19 @@
 # ═══════════════════════════════════════════════════════════════════════
-# Builder Stage - Build application
-# ═════════════════════════════════════════════════════════════════════════
+# Stage 1 — Build Rust scraper binary
+# ═══════════════════════════════════════════════════════════════════════
+FROM rust:alpine AS rust-builder
+
+RUN apk add --no-cache musl-dev
+
+WORKDIR /app
+COPY scraper-rs/ .
+
+RUN cargo build --release && \
+    cp target/release/scraper-rs /scraper-rs
+
+# ═══════════════════════════════════════════════════════════════════════
+# Stage 2 — Build NestJS application
+# ═══════════════════════════════════════════════════════════════════════
 FROM node:20-alpine AS builder
 
 WORKDIR /app
@@ -19,8 +32,8 @@ RUN pnpm prisma:generate
 RUN pnpm run build
 
 # ═══════════════════════════════════════════════════════════════════════
-# Production Stage - Minimal runtime image
-# ═════════════════════════════════════════════════════════════════════════
+# Stage 3 — Production runtime
+# ═══════════════════════════════════════════════════════════════════════
 FROM node:20-alpine
 
 WORKDIR /app
@@ -37,14 +50,13 @@ COPY entrypoint.sh ./
 COPY package.json pnpm-lock.yaml* ./
 COPY prisma ./prisma
 
-# Skip Chromium download - use browserless/chrome service instead
-RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true pnpm install $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
+RUN pnpm install $(if [ -f pnpm-lock.yaml ]; then echo "--frozen-lockfile"; fi)
 
-# Regenerate Prisma client in production stage (needed for runtime)
 RUN pnpm prisma:generate
 
-# Copy built application from builder
 COPY --from=builder /app/dist ./dist
+
+COPY --from=rust-builder /scraper-rs /usr/local/bin/scraper-rs
 
 ENV NODE_ENV=production
 
