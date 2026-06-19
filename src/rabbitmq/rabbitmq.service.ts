@@ -20,6 +20,8 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
   private consumerTags: string[] = []
   private subscriptions: SubscriptionEntry[] = []
   private reconnecting = false
+  private retryTimer: ReturnType<typeof setInterval> | null = null
+  private retryLoopBusy = false
 
   private rabbitmqUrl: string
   private exchange: string
@@ -40,6 +42,10 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     this.logger.log('RabbitMQService shutting down...')
+    if (this.retryTimer) {
+      clearInterval(this.retryTimer)
+      this.retryTimer = null
+    }
     await this.disconnect()
   }
 
@@ -110,38 +116,78 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async _setupConsumer(
+    queue: string,
+    routingKey: string,
+    handler: (payload: Record<string, any>) => Promise<void>,
+  ): Promise<string> {
+    await this.channel!.assertQueue(queue, { durable: true })
+    await this.channel!.bindQueue(queue, this.exchange, routingKey)
+    await this.channel!.prefetch(1)
+
+    const result = await this.channel!.consume(
+      queue,
+      async (message) => {
+        if (message) {
+          try {
+            const payload = JSON.parse((message as any).content.toString())
+            this.logger.debug(`Received message from ${queue}`)
+            await handler(payload)
+            this.channel?.ack(message)
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error)
+            this.logger.error(`Error processing message from [${queue}]: ${errorMessage}`)
+            this.channel?.nack(message, false, false)
+          }
+        }
+      },
+      { noAck: false },
+    )
+
+    this.consumerTags.push(result.consumerTag)
+    this.logger.log(`Subscribed to ${queue} | routing key: ${routingKey}`)
+    return result.consumerTag
+  }
+
   private async _replaySubscriptions(): Promise<void> {
     if (!this.channel) return
+
+    this.consumerTags = []
+
     for (const sub of this.subscriptions) {
       try {
-        await this.channel.assertQueue(sub.queue, { durable: true })
-        await this.channel.bindQueue(sub.queue, this.exchange, sub.routingKey)
-        await this.channel.prefetch(1)
-        const result = await this.channel.consume(
-          sub.queue,
-          async (message) => {
-            if (message) {
-              try {
-                const payload = JSON.parse((message as any).content.toString())
-                this.logger.debug(`Received message from ${sub.queue}`)
-                await sub.handler(payload)
-                this.channel?.ack(message)
-              } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : String(error)
-                this.logger.error(`Error processing message from [${sub.queue}]: ${errorMessage}`)
-                this.channel?.nack(message, false, false)
-              }
-            }
-          },
-          { noAck: false },
-        )
-        this.consumerTags.push(result.consumerTag)
-        this.logger.log(`Resubscribed to ${sub.queue} | routing key: ${sub.routingKey}`)
+        await this._setupConsumer(sub.queue, sub.routingKey, sub.handler)
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error)
         this.logger.error(`Failed to resubscribe to ${sub.queue}: ${errorMessage}`)
       }
     }
+  }
+
+  private _startRetryLoop(): void {
+    if (this.retryTimer) return
+    this.logger.warn('RabbitMQ not connected — starting background retry loop (every 5s)')
+    this.retryTimer = setInterval(async () => {
+      if (this.isConnected() && this.consumerTags.length === this.subscriptions.length) {
+        clearInterval(this.retryTimer!)
+        this.retryTimer = null
+        return
+      }
+      if (this.retryLoopBusy || this.reconnecting || this.connecting) return
+      this.retryLoopBusy = true
+      try {
+        if (!this.isConnected()) {
+          await this.connect()
+        }
+        if (this.isConnected() && this.consumerTags.length < this.subscriptions.length) {
+          await this._replaySubscriptions()
+        }
+      } catch {
+        // will retry next interval
+      } finally {
+        this.retryLoopBusy = false
+      }
+    }, 5000)
   }
 
   async publish(routingKey: string, payload: Record<string, any>): Promise<void> {
@@ -180,48 +226,25 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     routingKey: string,
     handler: (payload: Record<string, any>) => Promise<void>,
   ): Promise<void> {
-    if (!this.isConnected()) {
-      this.logger.log(`Auto-connecting to RabbitMQ for subscribe to ${queue}...`)
-      await this.connect()
-    }
-
-    if (!this.channel) {
-      throw new Error('RabbitMQ channel not connected')
+    if (!this.subscriptions.some(s => s.queue === queue)) {
+      this.subscriptions.push({ queue, routingKey, handler })
     }
 
     try {
-      await this.channel.assertQueue(queue, { durable: true })
-      await this.channel.bindQueue(queue, this.exchange, routingKey)
-      await this.channel.prefetch(1)
-
-      const result = await this.channel.consume(
-        queue,
-        async (message) => {
-          if (message) {
-            try {
-              const payload = JSON.parse((message as any).content.toString())
-              this.logger.debug(`Received message from ${queue}`)
-              await handler(payload)
-              this.channel?.ack(message)
-            } catch (error) {
-              const errorMessage = error instanceof Error ? error.message : String(error)
-              this.logger.error(`Error processing message from [${queue}]: ${errorMessage}`)
-              this.channel?.nack(message, false, false)
-            }
-          }
-        },
-        { noAck: false },
-      )
-      const consumerTag = result.consumerTag
-
-      this.subscriptions.push({ queue, routingKey, handler })
-      this.consumerTags.push(consumerTag)
-      this.logger.log(`Subscribed to ${queue} | routing key: ${routingKey}`)
+      if (!this.isConnected()) {
+        this.logger.log(`Auto-connecting to RabbitMQ for subscribe to ${queue}...`)
+        await this.connect()
+      }
+      if (this.channel) {
+        await this._setupConsumer(queue, routingKey, handler)
+        return
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
-      this.logger.error(`Failed to subscribe to ${queue}: ${errorMessage}`)
-      throw error
+      this.logger.warn(`Initial subscribe to ${queue} failed: ${errorMessage} — retrying in background`)
     }
+
+    this._startRetryLoop()
   }
 
   private async disconnect(): Promise<void> {
