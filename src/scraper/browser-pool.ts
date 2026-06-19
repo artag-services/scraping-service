@@ -42,7 +42,8 @@ export class BrowserPool implements OnModuleInit, OnModuleDestroy {
       for (let i = 0; i < browsersNeeded; i++) {
         let browser: Browser
         if (browserlessEndpoint) {
-          browser = await puppeteer.connect({ browserWSEndpoint: browserlessEndpoint })
+          const protocolTimeout = Number(this.config.get('PUPPETEER_PROTOCOL_TIMEOUT', 120_000))
+          browser = await puppeteer.connect({ browserWSEndpoint: browserlessEndpoint, protocolTimeout })
         } else {
           const stealth = configureStealth()
           browser = await stealth.launch(BROWSER_LAUNCH_OPTIONS)
